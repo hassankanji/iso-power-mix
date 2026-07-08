@@ -44,20 +44,35 @@ def upsert_generation(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame) -> int:
     df = df[GENERATION_COLUMNS].copy()
     df["date"] = pd.to_datetime(df["date"]).dt.date
 
+    before = len(df)
+    df = df.dropna(subset=["generation_mwh"])
+    dropped = before - len(df)
+    if dropped:
+        print(f"upsert_generation: dropped {dropped} row(s) with no valid generation_mwh reading")
+    if df.empty:
+        return 0
+
     conn.register("_incoming", df)
-    conn.execute(
-        """
-        DELETE FROM generation
-        WHERE EXISTS (
-            SELECT 1 FROM _incoming i
-            WHERE generation.date = i.date
-              AND generation.iso = i.iso
-              AND generation.fuel_category = i.fuel_category
+    try:
+        conn.execute("BEGIN TRANSACTION")
+        conn.execute(
+            """
+            DELETE FROM generation
+            WHERE EXISTS (
+                SELECT 1 FROM _incoming i
+                WHERE generation.date = i.date
+                  AND generation.iso = i.iso
+                  AND generation.fuel_category = i.fuel_category
+            )
+            """
         )
-        """
-    )
-    conn.execute("INSERT INTO generation SELECT * FROM _incoming")
-    conn.unregister("_incoming")
+        conn.execute("INSERT INTO generation SELECT * FROM _incoming")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.unregister("_incoming")
     return len(df)
 
 

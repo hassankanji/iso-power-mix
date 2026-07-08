@@ -29,6 +29,7 @@ loose daily CSV, tolerating 404 ("not published yet") by skipping.
 from __future__ import annotations
 
 import io
+import time
 import zipfile
 from calendar import monthrange
 from datetime import date, timedelta
@@ -39,14 +40,19 @@ from src.connectors.base import finalize, http_session, long_to_daily_mwh
 from src.schema import CANONICAL_CATEGORIES
 
 ISO = "NYISO"
-EARLIEST_DATE = date(2015, 12, 1)
+EARLIEST_DATE = date(2015, 12, 9)  # live-verified: NYISO's Dec 2015 archive starts on the 9th, not the 1st
 REQUIRES_AUTH = False
 
 _BASE_URL = "http://mis.nyiso.com/public/csv/rtfuelmix/"
 _ZIP_TEMPLATE = _BASE_URL + "{ym}01rtfuelmix_csv.zip"
 _DAILY_TEMPLATE = _BASE_URL + "{ymd}rtfuelmix.csv"
 
-_RAW_COLUMNS = ["Time Stamp", "Time Zone", "Fuel Category", "Gen MW"]
+# NYISO renamed the value column from "Gen MWh" (files through ~2017) to
+# "Gen MW" (current files) without changing what it measures - both are the
+# same MW-like 5-min reading, just relabeled. _parse_csv_text normalizes
+# either spelling down to "Gen MW".
+_REQUIRED_COLUMNS = ["Time Stamp", "Time Zone", "Fuel Category"]
+_VALUE_COLUMN_ALIASES = ["Gen MW", "Gen MWh"]
 
 # Native NYISO "Fuel Category" -> canonical bucket. Dual Fuel generators can
 # burn either oil or gas; bucketed here as natural_gas as a simplification.
@@ -71,8 +77,13 @@ def _parse_csv_text(text: str) -> pd.DataFrame | None:
     if not text or not text.strip():
         return None
     raw = pd.read_csv(io.StringIO(text))
-    if raw.empty or not set(_RAW_COLUMNS).issubset(raw.columns):
+    if raw.empty or not set(_REQUIRED_COLUMNS).issubset(raw.columns):
         return None
+    value_col = next((c for c in _VALUE_COLUMN_ALIASES if c in raw.columns), None)
+    if value_col is None:
+        return None
+    if value_col != "Gen MW":
+        raw = raw.rename(columns={value_col: "Gen MW"})
     return raw
 
 
@@ -94,16 +105,24 @@ def _iter_months(start_date: date, end_date: date):
 def _fetch_month_zip(session, year: int, month: int) -> dict[date, pd.DataFrame]:
     """Fetch the monthly bulk zip and return {date: raw_df} for each member
     CSV it contains. Returns an empty dict if the zip isn't available
-    (404) or is malformed."""
+    (404) or is malformed. A malformed body during a fast multi-year backfill
+    is often transient throttling rather than a genuinely missing file, so
+    this retries once after a short pause before giving up on the month."""
     url = _ZIP_TEMPLATE.format(ym=f"{year:04d}{month:02d}")
-    resp = session.get(url, timeout=60)
-    if resp.status_code == 404:
-        return {}
-    resp.raise_for_status()
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(resp.content))
-    except zipfile.BadZipFile:
-        return {}
+
+    for attempt in range(2):
+        resp = session.get(url, timeout=60)
+        if resp.status_code == 404:
+            return {}
+        resp.raise_for_status()
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(resp.content))
+            break
+        except zipfile.BadZipFile:
+            if attempt == 0:
+                time.sleep(2.0)
+                continue
+            return {}
 
     out: dict[date, pd.DataFrame] = {}
     for name in zf.namelist():
@@ -157,13 +176,21 @@ def fetch_range(start_date: date, end_date: date) -> pd.DataFrame:
             if range_start <= day <= range_end:
                 day_frames[day] = raw
 
-        cur = range_start
-        while cur <= range_end:
-            if cur not in day_frames:
-                raw = _fetch_day_csv(session, cur)
-                if raw is not None:
-                    day_frames[cur] = raw
-            cur += timedelta(days=1)
+        # Loose daily files only exist for roughly the last couple of weeks,
+        # so only bother with the one-request-per-day fallback for recent
+        # months - for an old month whose zip failed, 30 individual 404s
+        # would just add load (and backfill request volume) for nothing.
+        month_is_recent = (date.today() - month_last).days < 30
+        if month_is_recent:
+            cur = range_start
+            while cur <= range_end:
+                if cur not in day_frames:
+                    raw = _fetch_day_csv(session, cur)
+                    if raw is not None:
+                        day_frames[cur] = raw
+                cur += timedelta(days=1)
+
+        time.sleep(0.15)
 
     empty = finalize(pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"]), ISO)
     if not day_frames:
@@ -176,7 +203,19 @@ def fetch_range(start_date: date, end_date: date) -> pd.DataFrame:
     # double-weighted in the mean(MW)*24 estimate.
     combined = combined.drop_duplicates(subset=["Time Stamp", "Fuel Category"], keep="first")
 
+    # Older files (through ~2017) omit seconds ("01/01/2016 00:05"); current
+    # files include them ("03/01/2024 00:05:00"). Deliberately NOT using
+    # pd.to_datetime(..., errors="coerce") with no format: pandas guesses a
+    # single fixed format from an early sample and applies it to the whole
+    # column, which silently turned the back half of a multi-format backfill
+    # into NaT (verified: 87% of rows lost this way on a real 2016 range).
+    # Try both known formats explicitly instead.
     ts = pd.to_datetime(combined["Time Stamp"], format="%m/%d/%Y %H:%M:%S", errors="coerce")
+    still_missing = ts.isna()
+    if still_missing.any():
+        ts.loc[still_missing] = pd.to_datetime(
+            combined.loc[still_missing, "Time Stamp"], format="%m/%d/%Y %H:%M", errors="coerce"
+        )
     combined = combined.loc[ts.notna()].copy()
     ts = ts.loc[ts.notna()]
     date_series = ts.dt.date

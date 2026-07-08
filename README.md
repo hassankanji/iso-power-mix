@@ -30,7 +30,7 @@ iso-power-mix/
 | **CAISO** | No | `caiso.com/outlook/history/{date}/fuelsource.csv` (not the OASIS API — OASIS doesn't cleanly expose actual fuel-mix history) | CSV | 5-min | 2019-01-01 → present (earlier dates 404) |
 | **ERCOT** | No | `ercot.com/gridinfo/generation` — annual XLSX + `FuelMixReport_PreviousYears.zip` (2007–2024 archive) | XLSX | 15-min | 2007-01-01 → present |
 | **SPP** | No | `portal.spp.org` file-browser API — `GenMix_{year}.csv` annual archives, `GenMix365_SPP.csv` rolling file for the current year | CSV | 5-min | 2011-01-01 → present |
-| **NYISO** | No | `mis.nyiso.com` — monthly zip archives + loose daily CSVs (P-63 report) | CSV | 5-min | 2015-12-01 → present |
+| **NYISO** | No | `mis.nyiso.com` — monthly zip archives + loose daily CSVs (P-63 report) | CSV | 5-min | 2015-12-09 → present |
 | **PJM** | **Yes** | `api.pjm.com` Data Miner 2, `gen_by_fuel` feed | JSON | hourly | Conservatively set to 2015-01-01; PJM does not document an official cutoff for this feed |
 | **MISO** | **Yes**, for history; no-auth path exists for today/yesterday | `public-api.misoenergy.org` (today/yesterday, no auth) + `data-exchange.misoenergy.org` LGI API (historical, registered) | JSON | ~5-min | See **MISO limitation** below — true backfill is not reliably available |
 | **ISO-NE** | **Yes** | `webservices.iso-ne.com` Web Services API, `genfuelmix/day/{date}` | JSON/XML | sub-hourly | 2008-01-01 → present |
@@ -123,3 +123,5 @@ python -m http.server 8420
 **Deploy:** enable GitHub Pages in repo Settings → Pages → "Deploy from a branch" → branch `main`, folder `/docs`. The dashboard updates automatically every time the daily workflow commits new data.
 
 Three views: national mix over time (stacked area, date-range filterable), per-ISO breakdown (selectable ISO + date range), and a latest-snapshot view showing each ISO's most recent available day plus a data-freshness table (flags any ISO more than 3 days stale).
+
+**Scaling note:** `docs/data/iso_daily.json` is the full per-ISO-per-day-per-category grain and already reaches ~14MB after backfilling CAISO/ERCOT/SPP/NYISO history (GitHub Pages gzips this in transit, so actual download is much smaller). It will keep growing slowly (~7 ISOs × 9 categories × 1 row/day). If it becomes unwieldy, the straightforward next step is splitting it by year or switching to a binary format (Parquet) loaded with a small WASM reader instead of one flat JSON file.
