@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>U.S. ISO Generation Mix Tracker</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>U.S. ISO Generation Mix Tracker</h1>
+  <p id="subtitle" class="subtitle">Loading...</p>
+</header>
+
+<nav class="tabs">
+  <button class="tab-btn active" data-view="national">National Trend</button>
+  <button class="tab-btn" data-view="iso">Per-ISO Breakdown</button>
+  <button class="tab-btn" data-view="snapshot">Latest Snapshot</button>
+</nav>
+
+<main>
+  <section id="view-national" class="view active">
+    <div class="controls">
+      <label>From <input type="date" id="national-start"></label>
+      <label>To <input type="date" id="national-end"></label>
+    </div>
+    <div class="chart-wrap"><canvas id="national-chart"></canvas></div>
+  </section>
+
+  <section id="view-iso" class="view">
+    <div class="controls">
+      <label>ISO
+        <select id="iso-select"></select>
+      </label>
+      <label>From <input type="date" id="iso-start"></label>
+      <label>To <input type="date" id="iso-end"></label>
+    </div>
+    <div class="chart-wrap"><canvas id="iso-chart"></canvas></div>
+  </section>
+
+  <section id="view-snapshot" class="view">
+    <h2>National mix (latest available day per ISO)</h2>
+    <div class="chart-wrap small"><canvas id="snapshot-national-chart"></canvas></div>
+    <h2>Per-ISO snapshot</h2>
+    <div id="snapshot-grid" class="snapshot-grid"></div>
+    <h2>Data freshness</h2>
+    <table id="health-table" class="health-table">
+      <thead><tr><th>ISO</th><th>Earliest date</th><th>Latest date</th><th>Days covered</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+
+<footer>
+  <p>Data pulled directly from CAISO, PJM, ERCOT, MISO, SPP, NYISO and ISO-NE. Updated daily via GitHub Actions.</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
