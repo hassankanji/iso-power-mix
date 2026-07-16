@@ -30,11 +30,23 @@ from src.connectors.base import finalize, http_session, long_to_daily_mwh
 from src.schema import CANONICAL_CATEGORIES
 
 ISO = "ISONE"
-EARLIEST_DATE = date(2008, 1, 1)
+# Live-verified 2026-07: the genfuelmix API returns 200 with an EMPTY payload
+# for dates before 2018-06-30 (the public "since 2008" claim applies to ISO
+# Express CSV reports, not this API). This may be a rolling ~8-year retention
+# window - if backfills start coming up empty at the old end, re-probe the
+# boundary rather than assuming data loss.
+EARLIEST_DATE = date(2018, 6, 30)
 REQUIRES_AUTH = True
 
 _URL_TEMPLATE = "https://webservices.iso-ne.com/api/v1.1/genfuelmix/day/{ymd}.json"
-_REQUEST_DELAY_SECONDS = 0.2
+_REQUEST_DELAY_SECONDS = 0.4
+# Live-verified during a real multi-year backfill: ISO-NE rate-limits (429)
+# hard under sustained request volume, and once triggered it tends to cascade
+# (consecutive days keep failing) unless given a real cooldown - a flat
+# per-request delay alone wasn't enough. Back off escalating amounts of time
+# after each 429-caused failure, and reset once a request succeeds again.
+_RATE_LIMIT_COOLDOWN_SECONDS = 8.0
+_RATE_LIMIT_COOLDOWN_CAP_SECONDS = 90.0
 
 # Canonical bucket <- native ISO-NE FuelCategory. Anything not listed here
 # (including values not yet seen, e.g. future new categories) falls back to
@@ -128,28 +140,37 @@ def fetch_range(start_date: date, end_date: date) -> pd.DataFrame:
 
     day = start_date
     first = True
+    consecutive_rate_limits = 0
     while day <= end_date:
         if not first:
             time.sleep(_REQUEST_DELAY_SECONDS)
 
-        if first:
-            # Let a 401 on the very first request propagate immediately --
-            # no point retrying thousands of doomed requests on bad creds.
+        try:
             daily = _fetch_day(session, day, auth)
-        else:
-            try:
-                daily = _fetch_day(session, day, auth)
-            except RuntimeError:
-                # A 401 deep into a backfill would mean creds were revoked
-                # mid-run; that's still fatal and should propagate.
-                raise
-            except Exception as exc:  # noqa: BLE001 - per-day resilience
-                warnings.warn(f"ISO-NE: skipping {day.isoformat()} due to error: {exc}")
-                daily = None
+        except RuntimeError:
+            # 401 = bad/revoked credentials. Fatal wherever it happens --
+            # no point burning thousands of doomed requests. (_fetch_day
+            # raises RuntimeError only for 401.)
+            raise
+        except Exception as exc:  # noqa: BLE001 - per-day resilience
+            # Everything else - including a 429 on the very FIRST request -
+            # is transient and must not abort the range. (Live-verified: a
+            # first-request 429 previously killed entire gap-fill ranges.)
+            warnings.warn(f"ISO-NE: skipping {day.isoformat()} due to error: {exc}")
+            daily = None
+            if "429" in str(exc):
+                consecutive_rate_limits += 1
+                cooldown = min(
+                    _RATE_LIMIT_COOLDOWN_SECONDS * consecutive_rate_limits,
+                    _RATE_LIMIT_COOLDOWN_CAP_SECONDS,
+                )
+                warnings.warn(f"ISO-NE: rate limited, cooling down {cooldown:.0f}s before continuing")
+                time.sleep(cooldown)
         first = False
 
         if daily is not None and not daily.empty:
             frames.append(daily)
+            consecutive_rate_limits = 0
 
         day += timedelta(days=1)
 

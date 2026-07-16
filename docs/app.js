@@ -13,6 +13,10 @@ function colorFor(cat) {
   return getComputedStyle(document.documentElement).getPropertyValue(`--c-${cat}`).trim();
 }
 
+function isoColorFor(iso) {
+  return getComputedStyle(document.documentElement).getPropertyValue(`--iso-${iso}`).trim() || "#95a5a6";
+}
+
 async function loadJSON(name) {
   const res = await fetch(`data/${name}`);
   if (!res.ok) throw new Error(`Failed to load ${name}: ${res.status}`);
@@ -52,6 +56,7 @@ function stackedAreaConfig(dates, datasets, yLabel) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      animation: false, // multi-year daily series can exceed 7k points per dataset - animating that is visibly slow
       interaction: { mode: "index", intersect: false },
       scales: {
         x: { ticks: { color: "#93a0b8", maxTicksLimit: 12 }, grid: { color: "#232b3d" } },
@@ -70,12 +75,42 @@ function stackedAreaConfig(dates, datasets, yLabel) {
   };
 }
 
-let nationalChart, isoChart;
+// Pivots the full per-ISO rows into one dataset per ISO (summing across fuel
+// categories). Because this consumes the same iso_daily rows as the fuel-type
+// pivot, the stacked totals of the two views are equal by construction.
+function pivotByIso(rows, startDate, endDate) {
+  const filtered = rows.filter(r => r.date >= startDate && r.date <= endDate);
+  const dates = uniqueSorted(filtered.map(r => r.date));
+  const isos = uniqueSorted(filtered.map(r => r.iso));
+  const byDateIso = {};
+  for (const r of filtered) {
+    byDateIso[`${r.date}|${r.iso}`] = (byDateIso[`${r.date}|${r.iso}`] || 0) + r.generation_mwh;
+  }
+  const datasets = isos.map(iso => ({
+    label: iso,
+    data: dates.map(d => (byDateIso[`${d}|${iso}`] || 0) / 1000), // GWh
+    backgroundColor: isoColorFor(iso),
+    borderColor: isoColorFor(iso),
+    fill: true,
+    stack: "mix",
+    pointRadius: 0,
+    borderWidth: 1,
+  }));
+  return { dates, datasets };
+}
+
+let nationalChart, isoChart, byIsoChart;
 
 function renderNational(rows, start, end) {
   const { dates, datasets } = pivotForStackedArea(rows, start, end);
   if (nationalChart) nationalChart.destroy();
   nationalChart = new Chart(document.getElementById("national-chart"), stackedAreaConfig(dates, datasets, "GWh / day (national)"));
+}
+
+function renderByIso(rows, start, end) {
+  const { dates, datasets } = pivotByIso(rows, start, end);
+  if (byIsoChart) byIsoChart.destroy();
+  byIsoChart = new Chart(document.getElementById("byiso-chart"), stackedAreaConfig(dates, datasets, "GWh / day (by ISO)"));
 }
 
 function renderIso(rows, iso, start, end) {
@@ -186,6 +221,18 @@ async function main() {
   nStart.addEventListener("change", refreshNational);
   nEnd.addEventListener("change", refreshNational);
   refreshNational();
+
+  // National by ISO
+  const bStart = document.getElementById("byiso-start");
+  const bEnd = document.getElementById("byiso-end");
+  bStart.min = bEnd.min = meta.date_range.min;
+  bStart.max = bEnd.max = meta.date_range.max;
+  bStart.value = meta.date_range.min;
+  bEnd.value = meta.date_range.max;
+  const refreshByIso = () => renderByIso(isoDaily, bStart.value, bEnd.value);
+  bStart.addEventListener("change", refreshByIso);
+  bEnd.addEventListener("change", refreshByIso);
+  refreshByIso();
 
   // Per-ISO breakdown
   const isoSelect = document.getElementById("iso-select");

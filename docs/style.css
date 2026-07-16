@@ -15,6 +15,14 @@
   --c-other_renewables: #16a085;
   --c-storage: #e74c3c;
   --c-imports_other: #95a5a6;
+
+  --iso-CAISO: #f1c40f;
+  --iso-ERCOT: #e07b39;
+  --iso-ISONE: #4d9de0;
+  --iso-MISO: #9b59b6;
+  --iso-NYISO: #2ecc71;
+  --iso-PJM: #e74c3c;
+  --iso-SPP: #16a085;
 }
 
 * { box-sizing: border-box; }
@@ -96,6 +104,13 @@ input[type="date"], select {
 .chart-wrap.small { height: 380px; max-width: 520px; }
 
 h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
+
+.view-note {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 0 0 14px;
+  max-width: 900px;
+}
 
 .snapshot-grid {
   display: grid;

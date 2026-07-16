@@ -15,6 +15,7 @@
 
 <nav class="tabs">
   <button class="tab-btn active" data-view="national">National Trend</button>
+  <button class="tab-btn" data-view="byiso">National by ISO</button>
   <button class="tab-btn" data-view="iso">Per-ISO Breakdown</button>
   <button class="tab-btn" data-view="snapshot">Latest Snapshot</button>
 </nav>
@@ -26,6 +27,15 @@
       <label>To <input type="date" id="national-end"></label>
     </div>
     <div class="chart-wrap"><canvas id="national-chart"></canvas></div>
+  </section>
+
+  <section id="view-byiso" class="view">
+    <div class="controls">
+      <label>From <input type="date" id="byiso-start"></label>
+      <label>To <input type="date" id="byiso-end"></label>
+    </div>
+    <p class="view-note">Total daily generation contributed by each ISO. The stacked total here equals the fuel-type total on the National Trend tab for the same dates. A band dropping to zero means that ISO has no data for those days (publishing lag or pre-coverage), not zero generation.</p>
+    <div class="chart-wrap"><canvas id="byiso-chart"></canvas></div>
   </section>
 
   <section id="view-iso" class="view">
