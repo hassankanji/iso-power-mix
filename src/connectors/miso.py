@@ -64,7 +64,6 @@ from datetime import date, timedelta
 import pandas as pd
 
 from src.connectors.base import finalize, http_session, long_to_daily_mwh
-from src.schema import CANONICAL_CATEGORIES
 
 ISO = "MISO"
 EARLIEST_DATE = date(2014, 1, 1)  # live-verified against the real LGI endpoint; earlier dates 500
@@ -78,7 +77,6 @@ _FUELMIX_BASE = "https://public-api.misoenergy.org/api/FuelMix"
 _LGI_BASE = "https://apim.misoenergy.org/lgi/v1"
 _LGI_REQUEST_DELAY_SECONDS = 0.65  # MISO Data Exchange rate limit is ~100 calls/min
 
-_IDENTITY_CATEGORY_MAP = {c: c for c in CANONICAL_CATEGORIES}
 
 # Canonical bucket <- native category. Matched case-insensitively. Anything
 # unrecognized falls back to "imports_other" via .get(..., "imports_other")
@@ -149,14 +147,13 @@ def _fetch_lgi_day(session, day: date, api_key: str) -> pd.DataFrame | None:
     # BEFORE averaging across hours - averaging across regions instead would
     # silently divide the true MISO-wide total by 3.
     region_summed = df.groupby(["date", "interval", "category"], as_index=False)["mw"].sum()
-    region_summed["_bucket"] = region_summed["category"].apply(_bucket)
 
     return long_to_daily_mwh(
         region_summed,
         region_summed["date"],
-        native_fuel_col="_bucket",
+        native_fuel_col="category",
         mw_col="mw",
-        category_map=_IDENTITY_CATEGORY_MAP,
+        category_map=_bucket,
     )
 
 
@@ -207,9 +204,10 @@ def _daily_from_current_window(combined: pd.DataFrame, start_date: date, end_dat
     combined = combined[(combined["date"] >= start_date) & (combined["date"] <= end_date)]
     if combined.empty:
         return pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"])
-    combined["_bucket"] = combined["category"].apply(_bucket)
+    # Raw native categories here: "Imports" and "Other" share imports_other,
+    # so they must be averaged separately then summed (see long_to_daily_mwh).
     return long_to_daily_mwh(
-        combined, combined["date"], native_fuel_col="_bucket", mw_col="mw", category_map=_IDENTITY_CATEGORY_MAP
+        combined, combined["date"], native_fuel_col="category", mw_col="mw", category_map=_bucket
     )
 
 

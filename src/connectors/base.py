@@ -64,16 +64,27 @@ def wide_to_daily_mwh(
     category. Daily energy is estimated as mean(MW) * 24h, which is robust
     regardless of the ISO's native sampling interval (5-min, 15-min, hourly)
     and tolerates small gaps in the intraday series. Columns not present in
-    `category_map` are ignored; multiple native columns mapping to the same
-    canonical category are summed per row before averaging."""
-    parts = []
+    `category_map` are ignored.
+
+    Multiple native columns mapping to the same canonical category (SPP's
+    "Coal Market"/"Coal Self", CAISO's "Small hydro"/"Large hydro") are
+    SUMMED per row before the across-rows mean. Pooling their rows into one
+    mean instead would silently divide the combined total by the number of
+    native columns - a bug that halved SPP's history until caught by
+    reconciling against EIA totals.
+    """
+    per_canon: dict[str, pd.Series] = {}
     for native_col, canon in category_map.items():
         if native_col not in df.columns:
             continue
         mw = pd.to_numeric(df[native_col], errors="coerce")
-        parts.append(pd.DataFrame({"date": date_series, "fuel_category": canon, "mw": mw}))
-    if not parts:
+        per_canon[canon] = mw if canon not in per_canon else per_canon[canon].add(mw, fill_value=0)
+    if not per_canon:
         return pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"])
+    parts = [
+        pd.DataFrame({"date": date_series, "fuel_category": canon, "mw": mw})
+        for canon, mw in per_canon.items()
+    ]
     combined = pd.concat(parts, ignore_index=True)
     combined = combined.groupby(["date", "fuel_category"], as_index=False)["mw"].mean()
     combined["generation_mwh"] = combined["mw"] * HOURS_PER_DAY
@@ -85,21 +96,39 @@ def long_to_daily_mwh(
     date_series: pd.Series,
     native_fuel_col: str,
     mw_col: str,
-    category_map: dict[str, str],
+    category_map,
 ) -> pd.DataFrame:
     """Convert a long table (one row per timestamp+native fuel type) into
-    long-format daily MWh per canonical category, using mean(MW) * 24h."""
-    mapped = df[native_fuel_col].map(category_map)
+    long-format daily MWh per canonical category.
+
+    Aggregation order matters: first mean(MW) * 24h per (date, NATIVE fuel),
+    then map native -> canonical, then SUM within each (date, canonical)
+    bucket. Mapping to canonical before averaging pools distinct native
+    fuels' readings into one mean - which divides the true combined total by
+    the number of natives sharing the bucket (NYISO's "Natural Gas" + "Dual
+    Fuel" halved this way until caught). Callers must therefore pass the RAW
+    native fuel column here, not a pre-bucketed one, whenever two natives
+    can share a bucket.
+
+    `category_map` is a dict (unmapped natives are dropped) or a callable
+    (applied to every native; use for .get(..., fallback) semantics).
+    """
     tmp = pd.DataFrame(
         {
             "date": date_series,
-            "fuel_category": mapped,
+            "native": df[native_fuel_col],
             "mw": pd.to_numeric(df[mw_col], errors="coerce"),
         }
-    ).dropna(subset=["fuel_category"])
-    tmp = tmp.groupby(["date", "fuel_category"], as_index=False)["mw"].mean()
-    tmp["generation_mwh"] = tmp["mw"] * HOURS_PER_DAY
-    return tmp[["date", "fuel_category", "generation_mwh"]]
+    )
+    per_native = tmp.groupby(["date", "native"], as_index=False)["mw"].mean()
+    if callable(category_map):
+        per_native["fuel_category"] = per_native["native"].map(category_map)
+    else:
+        per_native["fuel_category"] = per_native["native"].map(category_map)
+        per_native = per_native.dropna(subset=["fuel_category"])
+    out = per_native.groupby(["date", "fuel_category"], as_index=False)["mw"].sum()
+    out["generation_mwh"] = out["mw"] * HOURS_PER_DAY
+    return out[["date", "fuel_category", "generation_mwh"]]
 
 
 def finalize(df_daily: pd.DataFrame, iso: str) -> pd.DataFrame:

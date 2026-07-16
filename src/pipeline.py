@@ -30,6 +30,7 @@ import datetime as dt
 import os
 import traceback
 
+from src import eia
 from src.connectors import CONNECTORS
 from src.db import connect, latest_date_for_iso, log_ingestion, upsert_generation
 from src.gaps import (
@@ -42,6 +43,8 @@ from src.gaps import (
 
 LOOKBACK_DAYS = 7
 GAP_REPAIR_MAX_DAYS_PER_RUN = 30
+EIA_FILL_MAX_DAYS_PER_RUN = 120
+US48_LOOKBACK_DAYS = 7
 
 
 def _missing_env(names: list[str]) -> list[str]:
@@ -72,7 +75,9 @@ def run_all(
         lookback = getattr(connector, "LOOKBACK_DAYS", LOOKBACK_DAYS)
 
         if start_override:
-            start_date = start_override
+            # Clamp so one --start covering several ISOs doesn't burn
+            # thousands of doomed requests on dates before an ISO existed.
+            start_date = max(start_override, connector.EARLIEST_DATE)
         elif latest is None:
             start_date = connector.EARLIEST_DATE
         else:
@@ -104,9 +109,45 @@ def run_all(
     # --start/--end run already IS a manual repair of that window.
     if start_override is None and end_override is None:
         repair_gaps(conn, targets, results)
+        update_us48_reference(conn, end_date)
 
     conn.close()
     return results
+
+
+def update_us48_reference(conn, end_date: dt.date) -> None:
+    """Maintain the iso='US48' lower-48 national reference series from EIA.
+    First run backfills from EIA's 2018-07-01 start; after that it's an
+    incremental pull with a small overlap (EIA revises recent days). Skipped
+    silently without an EIA key - it's an overlay, never load-bearing."""
+    if not eia.has_key():
+        print("[US48] skipped: EIA_API_KEY not set (national reference overlay stays absent - see README)")
+        return
+    latest = latest_date_for_iso(conn, "US48")
+    start = eia.EIA_EARLIEST if latest is None else min(
+        latest + dt.timedelta(days=1), end_date - dt.timedelta(days=US48_LOOKBACK_DAYS - 1)
+    )
+    if start > end_date:
+        print("[US48] reference series up to date")
+        return
+    try:
+        # Chunked so the first-ever backfill (2018 -> today) stays within
+        # polite request sizes; incremental runs are a single small chunk.
+        total = 0
+        cur = start
+        while cur <= end_date:
+            chunk_end = min(cur + dt.timedelta(days=182), end_date)
+            df = eia.fetch_daily("US48", cur, chunk_end)
+            if not df.empty:
+                df["iso"] = "US48"
+                total += upsert_generation(conn, df[["date", "iso", "fuel_category", "generation_mwh"]])
+            cur = chunk_end + dt.timedelta(days=1)
+        log_ingestion(conn, "US48", end_date, "success", total, "EIA lower-48 reference")
+        print(f"[US48] wrote {total} reference rows ({start} .. {end_date})")
+    except Exception as e:
+        # Never let the reference overlay fail the run.
+        log_ingestion(conn, "US48", end_date, "failed", 0, str(e))
+        print(f"[US48] reference update failed ({e}) - continuing")
 
 
 def repair_gaps(conn, targets: list[str], results: dict[str, str]) -> None:
@@ -182,8 +223,42 @@ def repair_gaps(conn, targets: list[str], results: dict[str, str]) -> None:
                 iso_attempts.pop(key, None)
         missing_by_iso[iso] = sorted(still_missing)
 
+    # Second line of defense: whatever the ISO's own source still can't
+    # produce, fill with real EIA-930 measurements (2018-07-01 onward).
+    # Runs regardless of connector credentials - EIA needs only its own key.
+    if eia.has_key():
+        for iso in targets:
+            if iso not in eia.RESPONDENTS or iso == "US48":
+                continue
+            fillable = [d for d in missing_by_iso.get(iso, []) if d >= eia.EIA_EARLIEST]
+            fillable = fillable[-EIA_FILL_MAX_DAYS_PER_RUN:]
+            if not fillable:
+                continue
+            filled_total = 0
+            for r_start, r_end in dates_to_ranges(fillable):
+                try:
+                    df = eia.fetch_daily(iso, r_start, r_end)
+                except Exception as e:
+                    print(f"[{iso}] EIA gap fill {r_start}..{r_end} failed ({e}) - will retry next run")
+                    continue
+                if df.empty:
+                    continue
+                # Only fill days that are actually missing - never overwrite
+                # the ISO's own data with EIA's.
+                df = df[df["date"].isin(set(fillable))]
+                if df.empty:
+                    continue
+                df["iso"] = iso
+                filled_total += upsert_generation(conn, df[["date", "iso", "fuel_category", "generation_mwh"]])
+            if filled_total:
+                still = find_missing_dates(conn, iso)
+                n_filled = len(missing_by_iso[iso]) - len(still)
+                print(f"[{iso}] EIA gap fill: {n_filled} day(s) filled with EIA-930 data ({filled_total} rows)")
+                log_ingestion(conn, iso, dt.date.today(), "eia_gap_fill", filled_total, f"filled {n_filled} day(s)")
+                missing_by_iso[iso] = still
+
     # Drop stale attempt counters for dates that are no longer missing
-    # (e.g. filled by the EIA-930 backfill script).
+    # (e.g. filled by EIA).
     for iso, iso_attempts in attempts.items():
         currently_missing = {d.isoformat() for d in missing_by_iso.get(iso, [])}
         for key in [k for k in iso_attempts if k not in currently_missing]:

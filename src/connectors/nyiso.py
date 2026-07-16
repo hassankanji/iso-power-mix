@@ -37,7 +37,6 @@ from datetime import date, timedelta
 import pandas as pd
 
 from src.connectors.base import finalize, http_session, long_to_daily_mwh
-from src.schema import CANONICAL_CATEGORIES
 
 ISO = "NYISO"
 EARLIEST_DATE = date(2015, 12, 9)  # live-verified: NYISO's Dec 2015 archive starts on the 9th, not the 1st
@@ -70,7 +69,6 @@ _NATIVE_TO_CANONICAL = {
     "Other Fossil Fuels": "imports_other",
 }
 
-_IDENTITY_CATEGORY_MAP = {c: c for c in CANONICAL_CATEGORIES}
 
 
 def _parse_csv_text(text: str) -> pd.DataFrame | None:
@@ -229,16 +227,16 @@ def fetch_range(start_date: date, end_date: date) -> pd.DataFrame:
     if combined.empty:
         return empty
 
-    combined["_bucket"] = combined["Fuel Category"].apply(
-        lambda x: _NATIVE_TO_CANONICAL.get(str(x).strip(), "imports_other")
-    )
-
+    # Pass the RAW native fuel column: "Natural Gas" and "Dual Fuel" share
+    # the natural_gas bucket, and long_to_daily_mwh must average each
+    # native separately before summing them (pre-bucketing here would pool
+    # their readings into one mean, halving reported gas).
     daily = long_to_daily_mwh(
         combined,
         date_series,
-        native_fuel_col="_bucket",
+        native_fuel_col="Fuel Category",
         mw_col="Gen MW",
-        category_map=_IDENTITY_CATEGORY_MAP,
+        category_map=lambda x: _NATIVE_TO_CANONICAL.get(str(x).strip(), "imports_other"),
     )
     if daily.empty:
         return empty

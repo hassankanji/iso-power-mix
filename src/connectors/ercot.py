@@ -120,6 +120,11 @@ _ZIP_LINK_RE = re.compile(
 _IDENTITY_CATEGORY_MAP = {c: c for c in CANONICAL_CATEGORIES}
 
 _DIRECT_FUEL_MAP = {
+    # Dashboard-feed names (the XLSX uses "Gas"/"Gas-CC", caught by the
+    # startswith("gas") rule below - but the dashboard says "Natural Gas",
+    # which does NOT start with "gas", and "Coal and Lignite").
+    "naturalgas": "natural_gas",
+    "coalandlignite": "coal",
     "coal": "coal",
     "nuclear": "nuclear",
     "hydro": "hydro",

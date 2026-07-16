@@ -27,7 +27,6 @@ from datetime import date, timedelta
 import pandas as pd
 
 from src.connectors.base import finalize, http_session, long_to_daily_mwh
-from src.schema import CANONICAL_CATEGORIES
 
 ISO = "ISONE"
 # Live-verified 2026-07: the genfuelmix API returns 200 with an EMPTY payload
@@ -112,17 +111,18 @@ def _fetch_day(session, day: date, auth: tuple[str, str]) -> pd.DataFrame | None
     if raw.empty or "FuelCategory" not in raw.columns or "GenMw" not in raw.columns:
         return None
 
-    raw["_bucket"] = raw["FuelCategory"].apply(
-        lambda x: NATIVE_TO_CANONICAL.get(str(x).strip(), "imports_other")
-    )
-
+    # Pass the RAW native fuel column: Wood/Refuse/Landfill Gas share the
+    # other_renewables bucket (and Oil/Other share imports_other), and
+    # long_to_daily_mwh must average each native separately before summing
+    # them (pre-bucketing here would pool their readings into one mean,
+    # cutting the combined bucket to a fraction of its true value).
     date_series = pd.Series([day] * len(raw))
     daily = long_to_daily_mwh(
         raw,
         date_series,
-        native_fuel_col="_bucket",
+        native_fuel_col="FuelCategory",
         mw_col="GenMw",
-        category_map={c: c for c in CANONICAL_CATEGORIES},
+        category_map=lambda x: NATIVE_TO_CANONICAL.get(str(x).strip(), "imports_other"),
     )
     return daily
 

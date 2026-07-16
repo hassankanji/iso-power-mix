@@ -30,6 +30,7 @@
       <label>From <input type="date" id="national-start"></label>
       <label>To <input type="date" id="national-end"></label>
       <label class="check"><input type="checkbox" id="national-pct"> % of total</label>
+      <label class="check" id="national-us48-wrap" hidden><input type="checkbox" id="national-us48" checked> US total (EIA)</label>
     </div>
     <p class="view-note" id="national-note"></p>
     <div class="chart-wrap"><canvas id="national-chart"></canvas></div>
@@ -74,8 +75,8 @@
   </section>
 
   <section id="view-snapshot" class="view">
-    <h2>National mix (latest available day per ISO)</h2>
-    <div class="chart-wrap small"><canvas id="snapshot-national-chart"></canvas></div>
+    <h2>Tracked-ISO mix (latest available day per ISO)</h2>
+    <div id="snapshot-national-bars" class="snapshot-card national-bars"></div>
     <h2>Per-ISO snapshot</h2>
     <div id="snapshot-grid" class="snapshot-grid"></div>
     <h2>Data freshness &amp; coverage</h2>

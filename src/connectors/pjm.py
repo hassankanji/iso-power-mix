@@ -197,14 +197,17 @@ def _fetch_chunk(
     timestamps = pd.to_datetime(df[ts_col], errors="coerce")
     date_series = timestamps.dt.date
 
-    df["_bucket"] = df["fuel_type"].apply(_bucket_for)
-
+    # Pass the RAW native fuel column: several PJM natives share one bucket
+    # (Gas/Natural Gas/Multiple Fuels -> natural_gas), and long_to_daily_mwh
+    # must average each native separately before summing them (pre-bucketing
+    # here would pool their readings into one mean, undercounting the bucket
+    # by the number of natives sharing it).
     daily = long_to_daily_mwh(
         df,
         date_series,
-        native_fuel_col="_bucket",
+        native_fuel_col="fuel_type",
         mw_col="mw",
-        category_map={c: c for c in CANONICAL_CATEGORIES},
+        category_map=_bucket_for,
     )
     return daily, first_request
 
