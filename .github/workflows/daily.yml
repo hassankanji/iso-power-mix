@@ -2,7 +2,7 @@ name: Daily ISO generation-mix pull
 
 on:
   schedule:
-    - cron: "0 13 * * *" # 13:00 UTC = 9am ET / 6am PT, daily
+    - cron: "0 13 * * *" # 13:00 UTC = 9am EDT (8am EST in winter), daily. GitHub may delay start by up to ~30 min under load.
   workflow_dispatch: {}
 
 permissions:
@@ -11,9 +11,7 @@ permissions:
 jobs:
   pull-and-commit:
     runs-on: ubuntu-latest
-    # The very first run backfills full history per ISO (years of data) and can take much
-    # longer than the routine daily incremental pull; subsequent runs are fast.
-    timeout-minutes: 300
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -24,25 +22,28 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run pipeline (pulls prior day for all 7 ISOs, upserts, exports dashboard JSON)
-        id: pipeline
+      # The DuckDB file is not committed (see README - Sustainability); the
+      # pipeline rebuilds it from the committed docs/data/iso_daily_*.json
+      # exports on this fresh checkout, then pulls the newest days, repairs
+      # any gaps it can, and regenerates the exports. A non-zero exit here
+      # means a real fetch failure or stale data (missing credentials only
+      # produce a "skipped" notice, not a failure) - the job goes red so
+      # GitHub emails a notification, but whatever data DID succeed is still
+      # committed by the next step.
+      - name: Run pipeline (rebuild DB, pull latest days, repair gaps, export dashboard JSON)
         env:
           PJM_SUBSCRIPTION_KEY: ${{ secrets.PJM_SUBSCRIPTION_KEY }}
           MISO_API_KEY: ${{ secrets.MISO_API_KEY }}
           ISONE_USERNAME: ${{ secrets.ISONE_USERNAME }}
           ISONE_PASSWORD: ${{ secrets.ISONE_PASSWORD }}
         run: python scripts/run_pipeline.py
-        continue-on-error: true
-
-      - name: Flag partial failure
-        if: steps.pipeline.outcome == 'failure'
-        run: echo "::warning::One or more ISOs failed to fetch today - see the 'Run pipeline' step log. Whatever data did succeed will still be committed below."
 
       - name: Commit updated data
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/power_mix.duckdb docs/data/
+          git add docs/data/
           if git diff --cached --quiet; then
             echo "No data changes to commit."
           else

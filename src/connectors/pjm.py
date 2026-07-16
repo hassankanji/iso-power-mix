@@ -60,6 +60,9 @@ from src.schema import CANONICAL_CATEGORIES
 ISO = "PJM"
 EARLIEST_DATE = date(2015, 1, 1)  # conservative default; gen_by_fuel's exact archive start is not documented publicly
 REQUIRES_AUTH = True
+# Pipeline pre-checks these and reports "skipped_no_credentials" instead of
+# attempting a fetch that would just 401.
+REQUIRED_ENV = ["PJM_SUBSCRIPTION_KEY"]
 
 _BASE_URL = "https://api.pjm.com/api/v1/gen_by_fuel"
 _MAX_ROWS_PER_REQUEST = 50000

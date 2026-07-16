@@ -37,6 +37,9 @@ ISO = "ISONE"
 # boundary rather than assuming data loss.
 EARLIEST_DATE = date(2018, 6, 30)
 REQUIRES_AUTH = True
+# Pipeline pre-checks these and reports "skipped_no_credentials" instead of
+# attempting a fetch that would just 401.
+REQUIRED_ENV = ["ISONE_USERNAME", "ISONE_PASSWORD"]
 
 _URL_TEMPLATE = "https://webservices.iso-ne.com/api/v1.1/genfuelmix/day/{ymd}.json"
 _REQUEST_DELAY_SECONDS = 0.4

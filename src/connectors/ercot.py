@@ -1,9 +1,30 @@
 """ERCOT connector.
 
-Uses ERCOT's legacy "Fuel Mix Report" (published at
-https://www.ercot.com/gridinfo/generation), NOT the newer api.ercot.com,
-which per ERCOT staff only exposes Wind/Solar rather than the full fuel
-mix. No auth required.
+Two complementary no-auth sources:
+
+1. The "Fuel Mix Report" XLSX workbooks (settlement-quality data, published
+   at https://www.ercot.com/gridinfo/generation) - full history back to
+   2007, but the current-year workbook is published in arrears, typically
+   1-4 weeks behind (a month's sheet stays empty until ERCOT posts it, then
+   fills in all at once).
+
+2. The public Fuel Mix dashboard JSON feed behind
+   https://www.ercot.com/gridmktinfo/dashboards/fuelmix:
+       https://www.ercot.com/api/1/services/read/dashboards/fuel-mix.json
+   This is the "daily values on ERCOT's website". It carries 5-minute
+   telemetered generation by fuel for the current day and the previous
+   day(s) only - no history - so it can't replace the XLSX, but pulling it
+   every day keeps ERCOT current to within ~1 day instead of weeks behind.
+
+Rows from the two sources differ slightly (telemetry vs settlement), so the
+XLSX always wins wherever both cover a date: fetch_range takes dashboard
+rows only for dates the XLSX doesn't have yet, and the pipeline's ERCOT
+lookback window (LOOKBACK_DAYS below) re-fetches the last ~45 days on every
+run so freshly-published settlement data replaces the earlier dashboard
+values in the database.
+
+This module deliberately does NOT use the newer api.ercot.com, which per
+ERCOT staff only exposes Wind/Solar rather than the full fuel mix.
 
 The generation page publishes three kinds of downloads, and the exact CDN
 paths (which embed the posting date, e.g. ``/files/docs/2026/02/09/...``)
@@ -65,7 +86,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
@@ -75,8 +96,14 @@ from src.schema import CANONICAL_CATEGORIES
 ISO = "ERCOT"
 EARLIEST_DATE = date(2007, 1, 1)
 REQUIRES_AUTH = False
+# Re-fetch this many trailing days every incremental run (overrides the
+# pipeline default of 7): once the dashboard feed keeps ERCOT current to
+# ~1 day, the XLSX needs a window this wide to overwrite those preliminary
+# dashboard rows with settlement data when ERCOT publishes it in arrears.
+LOOKBACK_DAYS = 45
 
 _GENERATION_PAGE_URL = "https://www.ercot.com/gridinfo/generation"
+_DASHBOARD_FUELMIX_URL = "https://www.ercot.com/api/1/services/read/dashboards/fuel-mix.json"
 _XLSX_LINK_RE = re.compile(
     r"https://www\.ercot\.com/files/docs/\S*?IntGenbyFuel(\d{4})\.xlsx",
     re.IGNORECASE,
@@ -252,6 +279,59 @@ def _daily_from_long(long_df: pd.DataFrame) -> pd.DataFrame:
     return long_to_daily_mwh(per_interval, per_interval["date"], "category", "mw", _IDENTITY_CATEGORY_MAP)
 
 
+def _fetch_dashboard_recent(session) -> pd.DataFrame:
+    """Fetch ERCOT's public fuel-mix dashboard JSON (current + previous
+    day(s), 5-minute MW telemetry) and aggregate it to daily MWh.
+
+    The feed's shape (observed via ERCOT's own dashboard and open-source
+    clients) is {"data": {"YYYY-MM-DD": {"<timestamp>": {"<Fuel>": {"gen":
+    MW, ...}, ...}, ...}}}, where cells are occasionally plain numbers
+    instead of {"gen": ...} dicts. Parsed defensively: anything
+    unrecognized is skipped with a warning and an empty frame is returned,
+    so a dashboard format change degrades ERCOT back to XLSX-only freshness
+    instead of failing the whole connector.
+    """
+    empty = pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"])
+    try:
+        resp = session.get(_DASHBOARD_FUELMIX_URL, timeout=30)
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as e:
+        print(f"ERCOT: dashboard fuel-mix fetch failed ({e}) -- continuing with XLSX only")
+        return empty
+
+    days = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(days, dict):
+        print("ERCOT: dashboard fuel-mix JSON shape unrecognized -- continuing with XLSX only")
+        return empty
+
+    records = []
+    for day_key, intervals in days.items():
+        try:
+            day = date.fromisoformat(str(day_key)[:10])
+        except ValueError:
+            continue
+        if not isinstance(intervals, dict):
+            continue
+        for ts, fuels in intervals.items():
+            if not isinstance(fuels, dict):
+                continue
+            for fuel, cell in fuels.items():
+                mw = cell.get("gen") if isinstance(cell, dict) else cell
+                if isinstance(mw, (int, float)):
+                    records.append({"date": day, "interval": ts, "fuel": fuel, "mw": mw})
+    if not records:
+        print("ERCOT: dashboard fuel-mix JSON contained no readable intervals -- continuing with XLSX only")
+        return empty
+
+    df = pd.DataFrame(records)
+    df["category"] = df["fuel"].map(_canon_fuel)
+    # Several native fuels can share one canonical bucket - sum them per
+    # interval before the mean-across-intervals, same as _daily_from_long.
+    per_interval = df.groupby(["date", "category", "interval"], as_index=False, sort=False)["mw"].sum()
+    return long_to_daily_mwh(per_interval, per_interval["date"], "category", "mw", _IDENTITY_CATEGORY_MAP)
+
+
 def fetch_range(start_date: date, end_date: date) -> pd.DataFrame:
     """Fetch daily generation-by-fuel-type MWh for ERCOT over [start_date, end_date].
 
@@ -262,6 +342,10 @@ def fetch_range(start_date: date, end_date: date) -> pd.DataFrame:
     (not yet published, or - for 2007-2015 - missing the optional `xlrd`
     dependency needed to read legacy .xls) are skipped rather than raising.
     Network failures propagate per the connector contract.
+
+    If the requested range reaches within 3 days of today, the public
+    fuel-mix dashboard feed is also fetched, and its daily values fill any
+    date in range the XLSX hasn't published yet (XLSX rows always win).
     """
     session = http_session()
     loose_urls, archive_url = _discover_sources(session)
@@ -308,14 +392,27 @@ def fetch_range(start_date: date, end_date: date) -> pd.DataFrame:
         if long_df is not None and not long_df.empty:
             frames.append(long_df)
 
-    if not frames:
-        return finalize(pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"]), ISO)
+    if frames:
+        combined_long = pd.concat(frames, ignore_index=True)
+        daily = _daily_from_long(combined_long)
+        if not daily.empty:
+            mask = (daily["date"] >= start_date) & (daily["date"] <= end_date)
+            daily = daily.loc[mask].reset_index(drop=True)
+    else:
+        daily = pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"])
 
-    combined_long = pd.concat(frames, ignore_index=True)
-    daily = _daily_from_long(combined_long)
-    if daily.empty:
-        return finalize(daily, ISO)
+    # Top up the XLSX's publication lag from the live dashboard feed, but
+    # only for dates the settlement workbook hasn't published yet.
+    if end_date >= date.today() - timedelta(days=3):
+        dashboard_daily = _fetch_dashboard_recent(session)
+        if not dashboard_daily.empty:
+            in_range = (dashboard_daily["date"] >= start_date) & (dashboard_daily["date"] <= end_date)
+            dashboard_daily = dashboard_daily.loc[in_range]
+            already_settled = set(daily["date"]) if not daily.empty else set()
+            dashboard_daily = dashboard_daily.loc[~dashboard_daily["date"].isin(already_settled)]
+            if not dashboard_daily.empty:
+                filled = sorted(dashboard_daily["date"].unique())
+                print(f"ERCOT: filled {len(filled)} not-yet-settled day(s) from the live dashboard feed ({filled[0]} .. {filled[-1]})")
+                daily = pd.concat([daily, dashboard_daily], ignore_index=True)
 
-    mask = (daily["date"] >= start_date) & (daily["date"] <= end_date)
-    daily = daily.loc[mask].reset_index(drop=True)
     return finalize(daily, ISO)

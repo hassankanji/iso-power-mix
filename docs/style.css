@@ -41,6 +41,19 @@ header {
 h1 { margin: 0 0 4px; font-size: 1.6rem; }
 .subtitle { color: var(--muted); margin: 0; font-size: 0.9rem; }
 
+.status-chips { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+
+.chip {
+  font-size: 0.75rem;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.chip.warn { border-color: #8a6d3b; color: #e6a23c; background: rgba(230, 162, 60, 0.08); }
+.chip.info { border-color: #3b6d8a; color: #6fb3e0; background: rgba(77, 157, 224, 0.08); }
+
 .tabs {
   display: flex;
   gap: 4px;
@@ -91,6 +104,15 @@ input[type="date"], select {
   padding: 6px 8px;
   border-radius: 4px;
   font-size: 0.9rem;
+}
+
+.controls label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-end;
+  padding-bottom: 8px;
+  cursor: pointer;
 }
 
 .range-presets {

@@ -40,9 +40,34 @@ def main():
     if not args.no_export:
         export_all()
 
+    skipped = [iso for iso, status in results.items() if status == "skipped_no_credentials"]
+    if skipped:
+        print(f"\nSkipped (credentials not configured, see README): {skipped}")
+
     failed = [iso for iso, status in results.items() if status == "failed"]
+
+    # Staleness alarm: an ISO can rot without ever "failing" (source quietly
+    # returns nothing). On routine incremental runs, treat any ISO that ran
+    # but is more than STALE_ALARM_DAYS behind as a failure so the GitHub
+    # Actions job goes red and sends a notification email.
+    STALE_ALARM_DAYS = 8
+    if args.start is None and args.end is None:
+        from src.db import connect, latest_date_for_iso
+
+        conn = connect()
+        today = dt.date.today()
+        for iso, status in results.items():
+            if status == "skipped_no_credentials":
+                continue
+            latest = latest_date_for_iso(conn, iso)
+            if latest is not None and (today - latest).days > STALE_ALARM_DAYS:
+                print(f"[{iso}] STALE: newest stored day is {latest} ({(today - latest).days} days old)")
+                if iso not in failed:
+                    failed.append(iso)
+        conn.close()
+
     if failed:
-        print(f"\nCompleted with failures: {failed}")
+        print(f"\nCompleted with failures/stale data: {failed}")
         sys.exit(1)
     print("\nAll ISOs completed successfully.")
 
