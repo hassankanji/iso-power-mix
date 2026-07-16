@@ -49,9 +49,16 @@ function pivotForStackedArea(rows, startDate, endDate) {
   return { dates, datasets };
 }
 
+// Bloomberg-style behavior: for short windows (<= 14 days) a stacked area
+// chart of daily data degenerates into a sliver (a 1-day window would be a
+// single invisible point), so switch to stacked bars, which read naturally
+// at that scale. Longer windows use the stacked area.
+const BAR_CHART_MAX_DAYS = 14;
+
 function stackedAreaConfig(dates, datasets, yLabel) {
+  const useBars = dates.length <= BAR_CHART_MAX_DAYS;
   return {
-    type: "line",
+    type: useBars ? "bar" : "line",
     data: { labels: dates, datasets },
     options: {
       responsive: true,
@@ -59,7 +66,7 @@ function stackedAreaConfig(dates, datasets, yLabel) {
       animation: false, // multi-year daily series can exceed 7k points per dataset - animating that is visibly slow
       interaction: { mode: "index", intersect: false },
       scales: {
-        x: { ticks: { color: "#93a0b8", maxTicksLimit: 12 }, grid: { color: "#232b3d" } },
+        x: { stacked: useBars, ticks: { color: "#93a0b8", maxTicksLimit: 12 }, grid: { color: "#232b3d" } },
         y: {
           stacked: true,
           ticks: { color: "#93a0b8" },
@@ -73,6 +80,54 @@ function stackedAreaConfig(dates, datasets, yLabel) {
       },
     },
   };
+}
+
+const RANGE_PRESETS = [
+  { label: "1D", days: 1 },
+  { label: "1W", days: 7 },
+  { label: "1M", days: 30 },
+  { label: "3M", days: 91 },
+  { label: "6M", days: 182 },
+  { label: "1Y", days: 365 },
+  { label: "5Y", days: 1826 },
+  { label: "Max", days: null },
+];
+
+function addDays(isoDate, n) {
+  const d = new Date(isoDate + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Renders the preset pill buttons into `containerId`. Clicking a preset
+// anchors the window to the most recent available date (Bloomberg-style
+// "last N days"); manually editing either date input clears the highlight.
+function setupRangePresets(containerId, startInput, endInput, refresh, range, defaultLabel) {
+  const container = document.getElementById(containerId);
+  for (const p of RANGE_PRESETS) {
+    const btn = document.createElement("button");
+    btn.className = "preset-btn";
+    btn.textContent = p.label;
+    btn.addEventListener("click", () => {
+      endInput.value = range.max;
+      if (p.days === null) {
+        startInput.value = range.min;
+      } else {
+        const start = addDays(range.max, -(p.days - 1));
+        startInput.value = start < range.min ? range.min : start;
+      }
+      container.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      refresh();
+    });
+    if (p.label === defaultLabel) btn.classList.add("active");
+    container.appendChild(btn);
+  }
+  for (const input of [startInput, endInput]) {
+    input.addEventListener("change", () =>
+      container.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"))
+    );
+  }
 }
 
 // Pivots the full per-ISO rows into one dataset per ISO (summing across fuel
@@ -220,6 +275,7 @@ async function main() {
   const refreshNational = () => renderNational(national, nStart.value, nEnd.value);
   nStart.addEventListener("change", refreshNational);
   nEnd.addEventListener("change", refreshNational);
+  setupRangePresets("national-presets", nStart, nEnd, refreshNational, meta.date_range, "Max");
   refreshNational();
 
   // National by ISO
@@ -232,6 +288,7 @@ async function main() {
   const refreshByIso = () => renderByIso(isoDaily, bStart.value, bEnd.value);
   bStart.addEventListener("change", refreshByIso);
   bEnd.addEventListener("change", refreshByIso);
+  setupRangePresets("byiso-presets", bStart, bEnd, refreshByIso, meta.date_range, "Max");
   refreshByIso();
 
   // Per-ISO breakdown
@@ -248,6 +305,7 @@ async function main() {
   isoSelect.addEventListener("change", refreshIso);
   iStart.addEventListener("change", refreshIso);
   iEnd.addEventListener("change", refreshIso);
+  setupRangePresets("iso-presets", iStart, iEnd, refreshIso, meta.date_range, "Max");
   refreshIso();
 
   // Latest snapshot

@@ -93,6 +93,31 @@ input[type="date"], select {
   font-size: 0.9rem;
 }
 
+.range-presets {
+  display: flex;
+  gap: 4px;
+  align-self: flex-end;
+  margin-right: 8px;
+}
+
+.preset-btn {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.preset-btn:hover { color: var(--text); border-color: var(--accent); }
+
+.preset-btn.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(77, 157, 224, 0.15);
+}
+
 .chart-wrap {
   background: var(--panel);
   border: 1px solid var(--border);
