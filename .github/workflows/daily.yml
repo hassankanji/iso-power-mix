@@ -48,7 +48,8 @@ jobs:
       # the next step.
       - name: Run pipeline
         env:
-          PJM_SUBSCRIPTION_KEY: ${{ secrets.PJM_SUBSCRIPTION_KEY }}
+          # Fallbacks tolerate the secret being saved under a near-miss name.
+          PJM_SUBSCRIPTION_KEY: ${{ secrets.PJM_SUBSCRIPTION_KEY || secrets.PJM_API_KEY || secrets.PJM_KEY }}
           MISO_API_KEY: ${{ secrets.MISO_API_KEY }}
           ISONE_USERNAME: ${{ secrets.ISONE_USERNAME }}
           ISONE_PASSWORD: ${{ secrets.ISONE_PASSWORD }}

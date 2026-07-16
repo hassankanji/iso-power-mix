@@ -185,6 +185,15 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
   margin-bottom: 10px;
 }
 
+.snapshot-card .prelim {
+  color: #e6a23c;
+  border: 1px solid #8a6d3b;
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 0.68rem;
+  cursor: help;
+}
+
 .bar-row { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; margin: 4px 0; }
 .bar-row .label { width: 110px; color: var(--muted); flex-shrink: 0; }
 .bar-row .bar-track { flex: 1; background: #232b3d; border-radius: 3px; height: 8px; overflow: hidden; }

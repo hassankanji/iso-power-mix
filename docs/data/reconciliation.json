@@ -1,0 +1,58 @@
+{
+ "window": {
+  "start": "2026-06-15",
+  "end": "2026-07-14"
+ },
+ "generated_at": "2026-07-16T22:27:26+00:00",
+ "isos": {
+  "CAISO": {
+   "days_compared": 30,
+   "ours_avg_gwh_per_day": 627.6,
+   "eia_avg_gwh_per_day": 497.5,
+   "ratio": 1.2616,
+   "verdict": "INVESTIGATE"
+  },
+  "PJM": {
+   "days_compared": 30,
+   "ours_avg_gwh_per_day": 2740.5,
+   "eia_avg_gwh_per_day": 2741.1,
+   "ratio": 0.9998,
+   "verdict": "OK"
+  },
+  "ERCOT": {
+   "days_compared": 30,
+   "ours_avg_gwh_per_day": 1620.5,
+   "eia_avg_gwh_per_day": 1619.7,
+   "ratio": 1.0005,
+   "verdict": "OK"
+  },
+  "MISO": {
+   "days_compared": 30,
+   "ours_avg_gwh_per_day": 2011.4,
+   "eia_avg_gwh_per_day": 2008.1,
+   "ratio": 1.0016,
+   "verdict": "OK"
+  },
+  "SPP": {
+   "days_compared": 30,
+   "ours_avg_gwh_per_day": 957.1,
+   "eia_avg_gwh_per_day": 957.0,
+   "ratio": 1.0001,
+   "verdict": "OK"
+  },
+  "NYISO": {
+   "days_compared": 30,
+   "ours_avg_gwh_per_day": 405.1,
+   "eia_avg_gwh_per_day": 403.7,
+   "ratio": 1.0034,
+   "verdict": "OK"
+  },
+  "ISONE": {
+   "days_compared": 30,
+   "ours_avg_gwh_per_day": 318.6,
+   "eia_avg_gwh_per_day": 342.8,
+   "ratio": 0.9293,
+   "verdict": "check"
+  }
+ }
+}

@@ -3,7 +3,7 @@
 Daily electricity generation-by-fuel-type data pulled directly from the 7 major U.S. ISOs/RTOs, normalized into a shared schema, stored in DuckDB, and visualized in a static dashboard built for quickly reading fundamental supply shifts (especially natural gas burn).
 
 **Dashboard:** https://hassankanji.github.io/iso-power-mix/
-**ISOs covered:** CAISO, ERCOT, MISO, SPP, NYISO, ISO-NE — plus PJM once its API key is approved (see [PJM status](#pjm-status))
+**ISOs covered:** all 7 — CAISO, PJM, ERCOT, MISO, SPP, NYISO, ISO-NE — with EIA-930 as gap-filler, national reference, and audit
 **Fuel buckets:** `natural_gas`, `coal`, `nuclear`, `hydro`, `wind`, `solar`, `other_renewables`, `storage`, `imports_other`
 
 ---
@@ -21,13 +21,13 @@ Daily electricity generation-by-fuel-type data pulled directly from the 7 major 
 
 | ISO | History starts | Freshness | Auth | Gaps |
 |---|---|---|---|---|
-| **CAISO** | 2019-01-01 | daily (≤1 day behind) | none | none (2 source holes auto-repaired 2026-07-16) |
-| **ERCOT** | 2007-01-01 | daily via live dashboard feed; settlement data replaces it ~1-4 weeks later | none | none (July arrears window filled from EIA-930) |
-| **MISO** | 2014-01-01 | daily (≤1 day behind) | key needed for history only | 45 days in 2014-2017 — see [MISO gaps](#miso-gaps) |
+| **CAISO** | 2019-01-01 | daily (≤1 day behind) | none | none |
+| **ERCOT** | 2007-01-01 | daily via live dashboard feed; settlement data replaces it ~1-4 weeks later | none | none |
+| **MISO** | 2014-01-01 | daily (≤1 day behind) | key needed for history only | none — all 85 source holes recovered, see [MISO gaps](#miso-gaps) |
 | **SPP** | 2011-01-01 | daily | none | none |
 | **NYISO** | 2015-12-09 | daily | none | none |
 | **ISO-NE** | 2018-06-30* | daily | username/password | none |
-| **PJM** | (2015-01-01 once keyed) | **no data yet** | subscription key | n/a |
+| **PJM** | 2016-01-01 | daily (≤1 day behind) | subscription key | none (feed starts 2016, not the documented 2015) |
 | *US48 (EIA)* | 2018-07-01 | ~1-2 days behind | EIA key | reference overlay, not an ISO |
 
 \* ISO-NE's Web Services API returns empty payloads before 2018-06-30 (live-verified; the public "since 2008" claim applies to ISO Express CSV reports, not this API) — possibly a rolling ~8-year retention window.
@@ -47,27 +47,17 @@ EIA's Hourly Electric Grid Monitor (Form EIA-930) independently meters hourly ge
 3. **EIA's `US48` series is the national reference overlay** on the National Trend tab (dashed line): sum-of-tracked-ISOs vs the true lower-48 total, at a glance.
 4. **EIA is the auditor.** The "Reconcile vs EIA-930" workflow compares our per-ISO daily totals against EIA's independent measurement and writes `docs/data/reconciliation.json`. This check is what caught a major aggregation bug (see [Logic check](#logic-check--verification-history)).
 
-**Why is our total so much lower than EIA's national number?** Two reasons, both structural: (a) PJM — the largest U.S. market, ~2,200 GWh/day — is pending its API key; (b) roughly a third of U.S. generation isn't in any ISO at all: the vertically-integrated utility Southeast (Southern Co., TVA, Florida...), Northwest, and Southwest. Tracked ISOs ≈ 5,300 GWh/day; add PJM ≈ 7,500; EIA lower-48 total ≈ 11,500+. The dashed overlay makes this coverage gap visible instead of confusing.
+**Why is the tracked-ISO total lower than EIA's national number?** Structural coverage: roughly a third of U.S. generation isn't in any ISO at all — the vertically-integrated utility Southeast (Southern Co., TVA, Florida...), Northwest, and Southwest. With PJM included, tracked ISOs ≈ 8,500-9,500 GWh/day (summer) vs EIA lower-48 ≈ 12,000-14,000. The dashed US48 overlay on the National Trend tab makes this coverage gap visible instead of confusing.
 
 ### MISO gaps
 
-MISO's historical data comes from its Data Exchange LGI API (the legacy public "Historical Generation Fuel Mix" market reports were discontinued December 12, 2025). The LGI backfill (2014→present) came back with **85 missing days** where the API itself returns nothing — holes on MISO's side, not fetch failures. Status after the 2026-07-16 repairs:
+MISO's historical data comes from its Data Exchange LGI API (the legacy public "Historical Generation Fuel Mix" market reports were discontinued December 12, 2025). The LGI backfill initially came back with **85 missing days** where the API returned nothing. All 85 have since been recovered: the 40 holes from 2022+ were filled with real EIA-930 measurements, and the 45 days from 2014-2017 — which looked permanently unavailable — turned out to be *intermittently* available from LGI and were recovered by the pipeline's automatic per-run retries within two days of turning that mechanism on. **MISO currently has zero missing days.**
 
-- **40 days (all the 2022+ holes) are filled with real EIA-930 data** — measured values, not estimates.
-- **45 days across 2014–2017 remain** ([`docs/data/gaps.json`](docs/data/gaps.json) lists them; also shown on the Latest Snapshot tab). They predate EIA-930's mid-2018 start and appear to be genuinely unrecoverable from any public source. The daily pipeline keeps retrying them via LGI (up to 5 attempts each) in case MISO ever restores them; meanwhile charts bridge them with straight-line estimates **in the dashboard exports only** (flagged `est` in the JSON, never written to the database, replaced automatically the moment real data arrives). The dashboard footer and header chip disclose how many days are estimated.
-
-Gap-filling is automatic for every ISO: the ISO's own source is retried first, then EIA-930 (2018-07+) as fallback, on every daily run. The manual "Backfill gaps from EIA-930" workflow (keyless bulk files) remains available as a belt-and-suspenders option.
+The machinery stays in place for any future hole (in MISO or any ISO): each daily run retries missing days against the ISO's own source first (bounded, newest first, 5 attempts per date), then falls back to EIA-930 for anything 2018-07+ the source still can't produce, and any brief remaining hole ≤10 days is bridged with straight-line estimates in the dashboard exports only (flagged `est`, never stored in the database, replaced automatically when real data arrives). Live gap state: [`docs/data/gaps.json`](docs/data/gaps.json) and the Latest Snapshot tab.
 
 ### PJM status
 
-PJM requires a (free) Data Miner 2 subscription key, and for non-member accounts PJM manually approves registrations — the email to `accountmanager@pjm.com` is sent and **pending approval**. Once the key arrives:
-
-1. Add it as the `PJM_SUBSCRIPTION_KEY` secret in repo Settings → Secrets and variables → Actions.
-2. The next daily run automatically backfills PJM from 2015-01-01 and it joins every view.
-
-Until then PJM is simply absent (clearly flagged on the dashboard), so "national" totals understate the eastern U.S. Two caveats for the first keyed run, both flagged in `src/connectors/pjm.py`: the fuel-type string mapping and pagination behavior are built from public docs, not verified against live responses — worth a spot-check of the first day of real PJM data against PJM's own dashboard.
-
----
+**Live since 2026-07-16** — the Data Miner 2 key is installed as the `PJM_SUBSCRIPTION_KEY` Actions secret and PJM is fully backfilled 2016-01-01 → present (the `gen_by_fuel` feed returns nothing before 2016 despite docs suggesting 2015). First-pull verification: calendar-2025 total 874 TWh with a 42% gas / 31% nuclear / 17% coal mix, matching PJM's published figures, so the previously-unverified fuel-string mapping is confirmed good.
 
 ## Logic check & verification history
 
@@ -76,7 +66,19 @@ A full sanity audit of magnitudes, rankings, and units was run 2026-07-16. Resul
 - **Units are correct end to end**: every connector produces daily MWh as `mean(MW over the day's readings) × 24h`; the dashboard divides by 1,000 and labels GWh. ERCOT's totals were verified to reproduce ERCOT's own published annual energy summaries exactly.
 - **Size ranking is right**: MISO (~2,000 GWh/day) > ERCOT (~1,600 summer) > CAISO ≈ SPP (~550-700) > NYISO ≈ ISO-NE (~300). Calendar-2025 totals: MISO 648 TWh, ERCOT 487 TWh, ISO-NE 104 TWh — each within a few percent of the ISOs' own published figures.
 - **The audit caught a real bug** (fixed 2026-07-16): the shared aggregation helpers *averaged* native fuel types that map into the same canonical bucket instead of *summing* them. Impact before the fix: SPP roughly **halved** from 2018 on (its files split every fuel into "Market"+"Self" columns), NYISO gas undercounted ~2× ("Natural Gas"+"Dual Fuel"), CAISO hydro and other-renewables undercounted (Small/Large hydro; geothermal+biomass+biogas), ISO-NE other-renewables undercounted ~3× (Wood+Refuse+Landfill Gas). MISO (LGI) and ERCOT were unaffected. **History for SPP, CAISO, NYISO and ISO-NE was re-pulled from source with the corrected code.**
-- **Ongoing guard**: the "Reconcile vs EIA-930" workflow compares every ISO's daily totals against EIA's independent metering (`docs/data/reconciliation.json`) — run it after any connector change. Expected steady-state ratios are near 1.00, with small structural deviations (CAISO's feed includes imports; EIA measures net generation).
+- **Ongoing guard**: the "Reconcile vs EIA-930" workflow compares every ISO's daily totals against EIA's independent metering (`docs/data/reconciliation.json`) — run it after any connector change. Results for the 30 days ending 2026-07-14 (GWh/day):
+
+  | ISO | ours | EIA | ratio | notes |
+  |---|---|---|---|---|
+  | PJM | 2,740 | 2,741 | 1.000 | |
+  | ERCOT | 1,620 | 1,620 | 1.000 | |
+  | MISO | 2,011 | 2,008 | 1.002 | |
+  | SPP | 957 | 957 | 1.000 | |
+  | NYISO | 405 | 404 | 1.003 | |
+  | CAISO | 628 | 498 | 1.262 | structural: our feed includes imports (~13% of total); the rest is net-vs-gross metering and BA-boundary definitions. Trends/mix unaffected; treat CAISO absolute levels accordingly |
+  | ISO-NE | 319 | 343 | 0.929 | structural: the genfuelmix API covers market-metered units; some small/settlement-only resources appear only in EIA's estimate |
+
+  Five of seven agree with independent federal measurement to within 0.3%.
 
 ## Known limitations (read before trusting the numbers)
 
@@ -180,7 +182,7 @@ Designed to run unattended:
 
 - **Repo size stays bounded.** The DB binary is no longer committed (a ~19MB binary committed daily would have grown the repo by ~7GB/year and eventually made GitHub unhappy). Daily commits now touch a few hundred KB of JSON whose diffs compress well.
 - **No external runtime dependencies.** Chart.js is vendored into `docs/vendor/`; the site is fully static and keeps working even if every data source goes down (it just stops getting fresher).
-- **Failures are loud.** A real fetch failure, or any ISO going >8 days stale, makes the daily job exit non-zero → the Actions run goes red → GitHub emails the repo owner. Missing credentials are *not* treated as failures, so the pending PJM key doesn't cause daily noise. Whatever data did succeed is still committed.
+- **Failures are loud.** A real fetch failure, or any ISO going >8 days stale, makes the daily job exit non-zero → the Actions run goes red → GitHub emails the repo owner. Missing credentials are *not* treated as failures, so an unconfigured optional key doesn't cause daily noise. Whatever data did succeed is still committed.
 - **Self-healing.** Every run re-fetches a trailing window (7 days; 45 for ERCOT), so transient misses and late-published data fix themselves; the gap-repair pass mops up older holes.
 - **Things that still need a human** (rare):
   - GitHub **disables cron schedules in repos with no activity for 60 days**. The daily data commits normally count as activity, but if the workflow is ever paused/broken for 60+ days, re-enable it with one click under Actions → "Daily ISO generation-mix pull".
