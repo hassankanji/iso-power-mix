@@ -40,6 +40,8 @@ ERCOT publishes the full fuel-mix history only in monthly-in-arrears XLSX workbo
 
 ### EIA integration — how the EIA API is used (and how it isn't)
 
+> **Setup note:** the automatic gap-filler, US48 overlay, and reconciliation all need the **`EIA_API_KEY` GitHub Actions secret** (Settings → Secrets and variables → Actions). Until it's added they skip silently — gaps are instead filled by the keyless "Backfill gaps from EIA-930" workflow (bulk files, same corrected data), and the US48 overlay simply doesn't appear.
+
 EIA's Hourly Electric Grid Monitor (Form EIA-930) independently meters hourly generation by fuel for every U.S. balancing authority from 2018-07-01 on, exposed through the [EIA open-data API](https://www.eia.gov/opendata/) (free key → **`EIA_API_KEY` Actions secret**). After weighing "replace the ISOs with EIA" against "use EIA alongside them", the design is:
 
 1. **ISOs stay the primary source.** They're fresher (EIA lags 1-2+ days), reach much further back (ERCOT 2007, SPP 2011 vs EIA's mid-2018), and carry finer fuel detail (EIA has no geothermal/biomass split for CAISO, no battery column before ~2023).
