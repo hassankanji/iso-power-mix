@@ -404,10 +404,11 @@ function renderSnapshotGrid(byIso) {
   const grid = document.getElementById("snapshot-grid");
   grid.innerHTML = "";
   for (const iso of Object.keys(byIso).sort()) {
-    const { as_of, mix } = byIso[iso];
+    const { as_of, mix, preliminary } = byIso[iso];
     const card = document.createElement("div");
     card.className = "snapshot-card";
-    card.innerHTML = `<h3>${iso}</h3><div class="as-of">as of ${as_of}</div>`;
+    const prelim = preliminary ? ' <span class="prelim" title="Live-telemetry values; replaced by settlement-quality data automatically">preliminary</span>' : "";
+    card.innerHTML = `<h3>${iso}</h3><div class="as-of">as of ${as_of}${prelim}</div>`;
     const barsContainer = document.createElement("div");
     card.appendChild(barsContainer);
     grid.appendChild(card);

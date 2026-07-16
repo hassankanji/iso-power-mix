@@ -150,9 +150,16 @@ def export_all(conn: duckdb.DuckDBPyConnection | None = None) -> None:
             "SELECT fuel_category, generation_mwh FROM generation WHERE iso = ? AND date = ?",
             [iso, as_of],
         ).df()
+        as_of_date = pd.to_datetime(as_of).date()
+        # ERCOT's freshest days come from live telemetry (settlement data
+        # replaces them weeks later) and MISO's from its no-auth snapshot
+        # feed (the keyed LGI value replaces it next morning) - flag them so
+        # a reader knows the newest mix can still shift slightly.
+        preliminary = iso in ("ERCOT", "MISO") and (dt.date.today() - as_of_date).days <= 2
         snapshot_by_iso[iso] = {
-            "as_of": pd.to_datetime(as_of).strftime("%Y-%m-%d"),
+            "as_of": as_of_date.isoformat(),
             "mix": day.to_dict(orient="records"),
+            **({"preliminary": True} if preliminary else {}),
         }
         for _, r in day.iterrows():
             national_snapshot[r["fuel_category"]] = national_snapshot.get(r["fuel_category"], 0.0) + r["generation_mwh"]
