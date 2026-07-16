@@ -1,0 +1,42 @@
+name: Backfill gaps from EIA-930
+
+# Manual, on-demand: downloads EIA's six-month bulk files (100-200MB each)
+# and fills any remaining gap days from 2018-07-01 onward with real measured
+# EIA-930 data. Run it from the Actions tab whenever gaps.json shows
+# "given_up" dates you want filled. Safe to re-run; it only touches days
+# that are still missing.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fill gaps from EIA-930
+        run: python scripts/backfill_gaps_eia930.py
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data/
+          if git diff --cached --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "Backfill gap days from EIA-930"
+            git push
+          fi

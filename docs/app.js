@@ -9,6 +9,8 @@ const LABELS = {
   storage: "Storage", imports_other: "Imports / Other",
 };
 
+const ALL_ISOS = ["CAISO", "PJM", "ERCOT", "MISO", "SPP", "NYISO", "ISONE"];
+
 function colorFor(cat) {
   return getComputedStyle(document.documentElement).getPropertyValue(`--c-${cat}`).trim();
 }
@@ -17,9 +19,12 @@ function isoColorFor(iso) {
   return getComputedStyle(document.documentElement).getPropertyValue(`--iso-${iso}`).trim() || "#95a5a6";
 }
 
-async function loadJSON(name) {
+async function loadJSON(name, optional = false) {
   const res = await fetch(`data/${name}`);
-  if (!res.ok) throw new Error(`Failed to load ${name}: ${res.status}`);
+  if (!res.ok) {
+    if (optional) return null;
+    throw new Error(`Failed to load ${name}: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -27,18 +32,41 @@ function uniqueSorted(arr) {
   return [...new Set(arr)].sort();
 }
 
-// Pivots long-format rows [{date, fuel_category, generation_mwh}, ...] into
-// one Chart.js dataset per category, aligned on the union of dates (missing = 0).
-function pivotForStackedArea(rows, startDate, endDate) {
-  const filtered = rows.filter(r => r.date >= startDate && r.date <= endDate);
-  const dates = uniqueSorted(filtered.map(r => r.date));
-  const byDateCat = {};
-  for (const r of filtered) {
-    byDateCat[`${r.date}|${r.fuel_category}`] = (byDateCat[`${r.date}|${r.fuel_category}`] || 0) + r.generation_mwh;
+// ---------------------------------------------------------------------------
+// Data: rows are decoded from the compact per-year files
+// (docs/data/iso_daily_<year>.json, rows = [date, iso, fuel_index, mwh(, est)])
+// into {date, iso, cat, mwh, est} objects once at load.
+
+async function loadAllRows(meta) {
+  const payloads = await Promise.all(meta.years.map(y => loadJSON(`iso_daily_${y}.json`)));
+  const rows = [];
+  for (const payload of payloads) {
+    const cats = payload.fuel_categories || CATEGORIES;
+    for (const r of payload.rows) {
+      rows.push({ date: r[0], iso: r[1], cat: cats[r[2]], mwh: r[3], est: r.length > 4 && r[4] ? 1 : 0 });
+    }
   }
+  return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Pivots. All values are converted MWh -> GWh for display.
+
+function pivotNational(rows, startDate, endDate, asPct) {
+  const byDateCat = {};
+  const totals = {};
+  for (const r of rows) {
+    if (r.date < startDate || r.date > endDate) continue;
+    byDateCat[`${r.date}|${r.cat}`] = (byDateCat[`${r.date}|${r.cat}`] || 0) + r.mwh;
+    totals[r.date] = (totals[r.date] || 0) + r.mwh;
+  }
+  const dates = uniqueSorted(Object.keys(totals));
   const datasets = CATEGORIES.map(cat => ({
     label: LABELS[cat],
-    data: dates.map(d => (byDateCat[`${d}|${cat}`] || 0) / 1000), // GWh for readability
+    data: dates.map(d => {
+      const v = byDateCat[`${d}|${cat}`] || 0;
+      return asPct ? (totals[d] > 0 ? (v / totals[d]) * 100 : 0) : v / 1000;
+    }),
     backgroundColor: colorFor(cat),
     borderColor: colorFor(cat),
     fill: true,
@@ -49,38 +77,190 @@ function pivotForStackedArea(rows, startDate, endDate) {
   return { dates, datasets };
 }
 
+function pivotByIso(rows, startDate, endDate) {
+  const byDateIso = {};
+  const dateSet = new Set();
+  const isoSet = new Set();
+  for (const r of rows) {
+    if (r.date < startDate || r.date > endDate) continue;
+    byDateIso[`${r.date}|${r.iso}`] = (byDateIso[`${r.date}|${r.iso}`] || 0) + r.mwh;
+    dateSet.add(r.date);
+    isoSet.add(r.iso);
+  }
+  const dates = [...dateSet].sort();
+  const isos = [...isoSet].sort();
+  const datasets = isos.map(iso => ({
+    label: iso,
+    data: dates.map(d => (byDateIso[`${d}|${iso}`] || 0) / 1000),
+    backgroundColor: isoColorFor(iso),
+    borderColor: isoColorFor(iso),
+    fill: true,
+    stack: "mix",
+    pointRadius: 0,
+    borderWidth: 1,
+  }));
+  return { dates, datasets };
+}
+
+function pivotSingleIso(rows, iso, startDate, endDate, asPct) {
+  const byDateCat = {};
+  const totals = {};
+  for (const r of rows) {
+    if (r.iso !== iso || r.date < startDate || r.date > endDate) continue;
+    byDateCat[`${r.date}|${r.cat}`] = (byDateCat[`${r.date}|${r.cat}`] || 0) + r.mwh;
+    totals[r.date] = (totals[r.date] || 0) + r.mwh;
+  }
+  const dates = uniqueSorted(Object.keys(totals));
+  const datasets = CATEGORIES.map(cat => ({
+    label: LABELS[cat],
+    data: dates.map(d => {
+      const v = byDateCat[`${d}|${cat}`] || 0;
+      return asPct ? (totals[d] > 0 ? (v / totals[d]) * 100 : 0) : v / 1000;
+    }),
+    backgroundColor: colorFor(cat),
+    borderColor: colorFor(cat),
+    fill: true,
+    stack: "mix",
+    pointRadius: 0,
+    borderWidth: 1,
+  }));
+  return { dates, datasets };
+}
+
+// One line per ISO for a single fuel. Missing (date, iso) pairs become null
+// so the line visibly bridges gaps (spanGaps) instead of plunging to zero.
+function pivotFuelComparison(rows, cat, startDate, endDate, asPct, smooth) {
+  const value = {};      // `${date}|${iso}` -> mwh of selected fuel
+  const isoTotals = {};  // `${date}|${iso}` -> mwh across all fuels
+  const dateSet = new Set();
+  for (const r of rows) {
+    if (r.date < startDate || r.date > endDate) continue;
+    const key = `${r.date}|${r.iso}`;
+    isoTotals[key] = (isoTotals[key] || 0) + r.mwh;
+    if (r.cat === cat) value[key] = (value[key] || 0) + r.mwh;
+    dateSet.add(r.date);
+  }
+  const dates = [...dateSet].sort();
+  const datasets = [];
+  for (const iso of ALL_ISOS) {
+    let any = false;
+    const data = dates.map(d => {
+      const key = `${d}|${iso}`;
+      if (!(key in isoTotals)) return null; // ISO has no data that day at all
+      const v = value[key] || 0;
+      if (v !== 0) any = true;
+      return asPct ? (isoTotals[key] > 0 ? (v / isoTotals[key]) * 100 : 0) : v / 1000;
+    });
+    if (!any) continue; // e.g. storage in ISOs whose reports have no storage column
+    datasets.push({
+      label: iso,
+      data: smooth ? movingAverage(data, 7) : data,
+      borderColor: isoColorFor(iso),
+      backgroundColor: isoColorFor(iso),
+      fill: false,
+      pointRadius: 0,
+      borderWidth: 1.8,
+      spanGaps: true,
+    });
+  }
+  return { dates, datasets };
+}
+
+// Trailing n-day mean; nulls are skipped inside the window and preserved
+// where the day itself has no data.
+function movingAverage(data, n) {
+  const out = new Array(data.length).fill(null);
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] === null) continue;
+    let sum = 0, count = 0;
+    for (let j = Math.max(0, i - n + 1); j <= i; j++) {
+      if (data[j] !== null) { sum += data[j]; count++; }
+    }
+    out[i] = count > 0 ? sum / count : null;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Chart configs
+
 // Bloomberg-style behavior: for short windows (<= 14 days) a stacked area
-// chart of daily data degenerates into a sliver (a 1-day window would be a
-// single invisible point), so switch to stacked bars, which read naturally
-// at that scale. Longer windows use the stacked area.
+// chart of daily data degenerates into a sliver, so switch to stacked bars.
 const BAR_CHART_MAX_DAYS = 14;
 
-function stackedAreaConfig(dates, datasets, yLabel) {
+function fmt(v) {
+  return v >= 100 ? Math.round(v).toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
+function stackedAreaConfig(dates, datasets, yLabel, asPct) {
   const useBars = dates.length <= BAR_CHART_MAX_DAYS;
+  const unit = asPct ? "%" : " GWh";
   return {
     type: useBars ? "bar" : "line",
     data: { labels: dates, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      animation: false, // multi-year daily series can exceed 7k points per dataset - animating that is visibly slow
+      animation: false, // multi-year daily series can exceed 7k points per dataset
       interaction: { mode: "index", intersect: false },
       scales: {
         x: { stacked: useBars, ticks: { color: "#93a0b8", maxTicksLimit: 12 }, grid: { color: "#232b3d" } },
         y: {
           stacked: true,
+          max: asPct ? 100 : undefined,
           ticks: { color: "#93a0b8" },
           grid: { color: "#232b3d" },
-          title: { display: true, text: yLabel, color: "#93a0b8" },
+          title: { display: true, text: asPct ? "% of total" : yLabel, color: "#93a0b8" },
         },
       },
       plugins: {
         legend: { labels: { color: "#e8ebf1", boxWidth: 12 } },
-        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()} GWh` } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}${unit}`,
+            footer: asPct ? undefined : (items) => {
+              const total = items.reduce((s, i) => s + i.parsed.y, 0);
+              return `Total: ${fmt(total)} GWh`;
+            },
+          },
+        },
       },
     },
   };
 }
+
+function multiLineConfig(dates, datasets, yLabel, asPct) {
+  const unit = asPct ? "%" : " GWh";
+  return {
+    type: "line",
+    data: { labels: dates, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: { ticks: { color: "#93a0b8", maxTicksLimit: 12 }, grid: { color: "#232b3d" } },
+        y: {
+          ticks: { color: "#93a0b8" },
+          grid: { color: "#232b3d" },
+          title: { display: true, text: yLabel, color: "#93a0b8" },
+          beginAtZero: true,
+        },
+      },
+      plugins: {
+        legend: { labels: { color: "#e8ebf1", boxWidth: 12 } },
+        tooltip: {
+          itemSort: (a, b) => b.parsed.y - a.parsed.y,
+          callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}${unit}` },
+        },
+      },
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Range presets
 
 const RANGE_PRESETS = [
   { label: "1D", days: 1 },
@@ -99,28 +279,33 @@ function addDays(isoDate, n) {
   return d.toISOString().slice(0, 10);
 }
 
-// Renders the preset pill buttons into `containerId`. Clicking a preset
-// anchors the window to the most recent available date (Bloomberg-style
-// "last N days"); manually editing either date input clears the highlight.
+// Renders the preset pill buttons; clicking anchors the window to the most
+// recent available date. Manually editing either date clears the highlight.
 function setupRangePresets(containerId, startInput, endInput, refresh, range, defaultLabel) {
   const container = document.getElementById(containerId);
+  const apply = (p) => {
+    endInput.value = range.max;
+    if (p.days === null) {
+      startInput.value = range.min;
+    } else {
+      const start = addDays(range.max, -(p.days - 1));
+      startInput.value = start < range.min ? range.min : start;
+    }
+  };
   for (const p of RANGE_PRESETS) {
     const btn = document.createElement("button");
     btn.className = "preset-btn";
     btn.textContent = p.label;
     btn.addEventListener("click", () => {
-      endInput.value = range.max;
-      if (p.days === null) {
-        startInput.value = range.min;
-      } else {
-        const start = addDays(range.max, -(p.days - 1));
-        startInput.value = start < range.min ? range.min : start;
-      }
+      apply(p);
       container.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       refresh();
     });
-    if (p.label === defaultLabel) btn.classList.add("active");
+    if (p.label === defaultLabel) {
+      btn.classList.add("active");
+      apply(p);
+    }
     container.appendChild(btn);
   }
   for (const input of [startInput, endInput]) {
@@ -130,49 +315,42 @@ function setupRangePresets(containerId, startInput, endInput, refresh, range, de
   }
 }
 
-// Pivots the full per-ISO rows into one dataset per ISO (summing across fuel
-// categories). Because this consumes the same iso_daily rows as the fuel-type
-// pivot, the stacked totals of the two views are equal by construction.
-function pivotByIso(rows, startDate, endDate) {
-  const filtered = rows.filter(r => r.date >= startDate && r.date <= endDate);
-  const dates = uniqueSorted(filtered.map(r => r.date));
-  const isos = uniqueSorted(filtered.map(r => r.iso));
-  const byDateIso = {};
-  for (const r of filtered) {
-    byDateIso[`${r.date}|${r.iso}`] = (byDateIso[`${r.date}|${r.iso}`] || 0) + r.generation_mwh;
-  }
-  const datasets = isos.map(iso => ({
-    label: iso,
-    data: dates.map(d => (byDateIso[`${d}|${iso}`] || 0) / 1000), // GWh
-    backgroundColor: isoColorFor(iso),
-    borderColor: isoColorFor(iso),
-    fill: true,
-    stack: "mix",
-    pointRadius: 0,
-    borderWidth: 1,
-  }));
-  return { dates, datasets };
+function initDateInputs(startInput, endInput, range) {
+  startInput.min = endInput.min = range.min;
+  startInput.max = endInput.max = range.max;
+  startInput.value = range.min;
+  endInput.value = range.max;
 }
 
-let nationalChart, isoChart, byIsoChart;
+// ---------------------------------------------------------------------------
+// Views
 
-function renderNational(rows, start, end) {
-  const { dates, datasets } = pivotForStackedArea(rows, start, end);
+let nationalChart, fuelChart, byIsoChart, isoChart;
+
+function renderNational(rows, start, end, asPct) {
+  const { dates, datasets } = pivotNational(rows, start, end, asPct);
   if (nationalChart) nationalChart.destroy();
-  nationalChart = new Chart(document.getElementById("national-chart"), stackedAreaConfig(dates, datasets, "GWh / day (national)"));
+  nationalChart = new Chart(document.getElementById("national-chart"),
+    stackedAreaConfig(dates, datasets, "GWh / day (national)", asPct));
+}
+
+function renderFuel(rows, cat, start, end, asPct, smooth) {
+  const { dates, datasets } = pivotFuelComparison(rows, cat, start, end, asPct, smooth);
+  if (fuelChart) fuelChart.destroy();
+  const yLabel = asPct ? `% of each ISO's daily total` : `GWh / day of ${LABELS[cat]}`;
+  fuelChart = new Chart(document.getElementById("fuel-chart"), multiLineConfig(dates, datasets, yLabel, asPct));
 }
 
 function renderByIso(rows, start, end) {
   const { dates, datasets } = pivotByIso(rows, start, end);
   if (byIsoChart) byIsoChart.destroy();
-  byIsoChart = new Chart(document.getElementById("byiso-chart"), stackedAreaConfig(dates, datasets, "GWh / day (by ISO)"));
+  byIsoChart = new Chart(document.getElementById("byiso-chart"), stackedAreaConfig(dates, datasets, "GWh / day (by ISO)", false));
 }
 
-function renderIso(rows, iso, start, end) {
-  const filtered = rows.filter(r => r.iso === iso);
-  const { dates, datasets } = pivotForStackedArea(filtered, start, end);
+function renderIso(rows, iso, start, end, asPct) {
+  const { dates, datasets } = pivotSingleIso(rows, iso, start, end, asPct);
   if (isoChart) isoChart.destroy();
-  isoChart = new Chart(document.getElementById("iso-chart"), stackedAreaConfig(dates, datasets, `GWh / day (${iso})`));
+  isoChart = new Chart(document.getElementById("iso-chart"), stackedAreaConfig(dates, datasets, `GWh / day (${iso})`, asPct));
 }
 
 function renderBarRows(container, mix, totalOverride) {
@@ -194,8 +372,7 @@ function renderBarRows(container, mix, totalOverride) {
 
 function renderSnapshotNationalChart(mix) {
   const sorted = [...mix].sort((a, b) => CATEGORIES.indexOf(a.fuel_category) - CATEGORIES.indexOf(b.fuel_category));
-  const canvas = document.getElementById("snapshot-national-chart");
-  new Chart(canvas, {
+  new Chart(document.getElementById("snapshot-national-chart"), {
     type: "doughnut",
     data: {
       labels: sorted.map(m => LABELS[m.fuel_category] || m.fuel_category),
@@ -228,17 +405,47 @@ function renderSnapshotGrid(byIso) {
   }
 }
 
-function renderHealthTable(isoStats) {
+function renderHealthTable(isoStats, gaps) {
   const tbody = document.querySelector("#health-table tbody");
   tbody.innerHTML = "";
   const maxLatest = isoStats.reduce((m, s) => (s.latest > m ? s.latest : m), "0000-00-00");
+  const summary = (gaps && gaps.summary) || {};
   for (const s of isoStats) {
     const tr = document.createElement("tr");
     const daysBehind = (new Date(maxLatest) - new Date(s.latest)) / 86400000;
     if (daysBehind > 3) tr.className = "stale";
-    tr.innerHTML = `<td>${s.iso}</td><td>${s.earliest}</td><td>${s.latest}</td><td>${s.days_covered}</td>`;
+    const gapDays = summary[s.iso] ? summary[s.iso].missing_days : 0;
+    tr.innerHTML = `<td>${s.iso}</td><td>${s.earliest}</td><td>${s.latest}</td><td>${s.days_covered}</td><td>${gapDays || "-"}</td>`;
     tbody.appendChild(tr);
   }
+  const missingIsos = ALL_ISOS.filter(iso => !isoStats.some(s => s.iso === iso));
+  for (const iso of missingIsos) {
+    const tr = document.createElement("tr");
+    tr.className = "stale";
+    tr.innerHTML = `<td>${iso}</td><td colspan="4">no data yet (awaiting API credentials - see README)</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function renderStatusChips(isoStats, meta) {
+  const container = document.getElementById("status-chips");
+  container.innerHTML = "";
+  const chip = (text, cls) => {
+    const el = document.createElement("span");
+    el.className = `chip ${cls}`;
+    el.textContent = text;
+    container.appendChild(el);
+  };
+  const missingIsos = ALL_ISOS.filter(iso => !isoStats.some(s => s.iso === iso));
+  for (const iso of missingIsos) chip(`${iso} not included yet (awaiting API key)`, "warn");
+  const maxLatest = isoStats.reduce((m, s) => (s.latest > m ? s.latest : m), "0000-00-00");
+  for (const s of isoStats) {
+    const behind = Math.round((new Date(maxLatest) - new Date(s.latest)) / 86400000);
+    if (behind > 3) chip(`${s.iso} data ${behind} days behind`, "warn");
+  }
+  const interp = meta.interpolated_days || {};
+  const nInterp = Object.values(interp).reduce((s, days) => s + days.length, 0);
+  if (nInterp > 0) chip(`${nInterp} missing source days estimated by interpolation`, "info");
 }
 
 function setupTabs() {
@@ -255,63 +462,89 @@ function setupTabs() {
 async function main() {
   setupTabs();
 
-  const [national, isoDaily, snapshot, meta] = await Promise.all([
-    loadJSON("national_daily.json"),
-    loadJSON("iso_daily.json"),
+  const meta = await loadJSON("meta.json");
+  const [rows, snapshot, gaps] = await Promise.all([
+    loadAllRows(meta),
     loadJSON("latest_snapshot.json"),
-    loadJSON("meta.json"),
+    loadJSON("gaps.json", true),
   ]);
+  const range = meta.date_range;
 
   document.getElementById("subtitle").textContent =
-    `Data ${meta.date_range.min} to ${meta.date_range.max} - last updated ${new Date(meta.generated_at).toLocaleString()}`;
+    `Data ${range.min} to ${range.max} - last updated ${new Date(meta.generated_at).toLocaleString()}`;
+  renderStatusChips(meta.iso_stats, meta);
+
+  const isosPresent = uniqueSorted(rows.map(r => r.iso));
+  document.getElementById("national-note").textContent =
+    `National = sum of ${isosPresent.join(", ")}.` +
+    (isosPresent.includes("PJM") ? "" : " PJM is not included yet (awaiting API-key approval), so absolute totals understate the U.S. east.");
 
   // National trend
   const nStart = document.getElementById("national-start");
   const nEnd = document.getElementById("national-end");
-  nStart.min = nEnd.min = meta.date_range.min;
-  nStart.max = nEnd.max = meta.date_range.max;
-  nStart.value = meta.date_range.min;
-  nEnd.value = meta.date_range.max;
-  const refreshNational = () => renderNational(national, nStart.value, nEnd.value);
+  const nPct = document.getElementById("national-pct");
+  initDateInputs(nStart, nEnd, range);
+  const refreshNational = () => renderNational(rows, nStart.value, nEnd.value, nPct.checked);
   nStart.addEventListener("change", refreshNational);
   nEnd.addEventListener("change", refreshNational);
-  setupRangePresets("national-presets", nStart, nEnd, refreshNational, meta.date_range, "Max");
+  nPct.addEventListener("change", refreshNational);
+  setupRangePresets("national-presets", nStart, nEnd, refreshNational, range, "1Y");
   refreshNational();
+
+  // Fuel comparison
+  const fuelSelect = document.getElementById("fuel-select");
+  fuelSelect.innerHTML = CATEGORIES.map(c => `<option value="${c}">${LABELS[c]}</option>`).join("");
+  fuelSelect.value = "natural_gas";
+  const fStart = document.getElementById("fuel-start");
+  const fEnd = document.getElementById("fuel-end");
+  const fSmooth = document.getElementById("fuel-smooth");
+  const fPct = document.getElementById("fuel-pct");
+  initDateInputs(fStart, fEnd, range);
+  const refreshFuel = () =>
+    renderFuel(rows, fuelSelect.value, fStart.value, fEnd.value, fPct.checked, fSmooth.checked);
+  for (const el of [fuelSelect, fStart, fEnd, fSmooth, fPct]) el.addEventListener("change", refreshFuel);
+  setupRangePresets("fuel-presets", fStart, fEnd, refreshFuel, range, "1Y");
+  refreshFuel();
 
   // National by ISO
   const bStart = document.getElementById("byiso-start");
   const bEnd = document.getElementById("byiso-end");
-  bStart.min = bEnd.min = meta.date_range.min;
-  bStart.max = bEnd.max = meta.date_range.max;
-  bStart.value = meta.date_range.min;
-  bEnd.value = meta.date_range.max;
-  const refreshByIso = () => renderByIso(isoDaily, bStart.value, bEnd.value);
+  initDateInputs(bStart, bEnd, range);
+  const refreshByIso = () => renderByIso(rows, bStart.value, bEnd.value);
   bStart.addEventListener("change", refreshByIso);
   bEnd.addEventListener("change", refreshByIso);
-  setupRangePresets("byiso-presets", bStart, bEnd, refreshByIso, meta.date_range, "Max");
+  setupRangePresets("byiso-presets", bStart, bEnd, refreshByIso, range, "1Y");
   refreshByIso();
 
   // Per-ISO breakdown
   const isoSelect = document.getElementById("iso-select");
-  const isos = uniqueSorted(isoDaily.map(r => r.iso));
-  isoSelect.innerHTML = isos.map(i => `<option value="${i}">${i}</option>`).join("");
+  isoSelect.innerHTML = isosPresent.map(i => `<option value="${i}">${i}</option>`).join("");
   const iStart = document.getElementById("iso-start");
   const iEnd = document.getElementById("iso-end");
-  iStart.min = iEnd.min = meta.date_range.min;
-  iStart.max = iEnd.max = meta.date_range.max;
-  iStart.value = meta.date_range.min;
-  iEnd.value = meta.date_range.max;
-  const refreshIso = () => renderIso(isoDaily, isoSelect.value, iStart.value, iEnd.value);
-  isoSelect.addEventListener("change", refreshIso);
-  iStart.addEventListener("change", refreshIso);
-  iEnd.addEventListener("change", refreshIso);
-  setupRangePresets("iso-presets", iStart, iEnd, refreshIso, meta.date_range, "Max");
+  const iPct = document.getElementById("iso-pct");
+  initDateInputs(iStart, iEnd, range);
+  const refreshIso = () => renderIso(rows, isoSelect.value, iStart.value, iEnd.value, iPct.checked);
+  for (const el of [isoSelect, iStart, iEnd, iPct]) el.addEventListener("change", refreshIso);
+  setupRangePresets("iso-presets", iStart, iEnd, refreshIso, range, "1Y");
   refreshIso();
 
   // Latest snapshot
   renderSnapshotNationalChart(snapshot.national);
   renderSnapshotGrid(snapshot.by_iso);
-  renderHealthTable(meta.iso_stats);
+  renderHealthTable(meta.iso_stats, gaps);
+  const gapsNote = document.getElementById("gaps-note");
+  if (gaps && gaps.summary && Object.keys(gaps.summary).length > 0) {
+    const parts = Object.entries(gaps.summary).map(([iso, g]) =>
+      `${iso}: ${g.missing_days} day(s)${g.still_retrying.length ? ` (${g.still_retrying.length} still being retried automatically)` : ""}`);
+    gapsNote.textContent = `Unfilled source gaps - ${parts.join("; ")}. Charts bridge these with straight-line estimates; the "Backfill gaps" GitHub Action can fill 2018+ gaps with real EIA-930 data.`;
+  }
+
+  const interp = meta.interpolated_days || {};
+  const nInterp = Object.values(interp).reduce((s, days) => s + days.length, 0);
+  if (nInterp > 0) {
+    document.getElementById("footer-quality").textContent =
+      `${nInterp} day(s) missing at the source are shown as straight-line interpolations so charts don't show fake dips. See the README's Known Limitations for details.`;
+  }
 }
 
 main().catch(err => {

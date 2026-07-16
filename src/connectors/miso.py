@@ -69,6 +69,10 @@ from src.schema import CANONICAL_CATEGORIES
 ISO = "MISO"
 EARLIEST_DATE = date(2014, 1, 1)  # live-verified against the real LGI endpoint; earlier dates 500
 REQUIRES_AUTH = True  # only for full history via LGI - today/yesterday works with no auth at all
+# Historical gap repair is only possible through the keyed LGI path; without
+# the key the pipeline skips MISO gap repair instead of burning retry
+# attempts on fetches that can't succeed.
+GAP_REPAIR_ENV = ["MISO_API_KEY"]
 
 _FUELMIX_BASE = "https://public-api.misoenergy.org/api/FuelMix"
 _LGI_BASE = "https://apim.misoenergy.org/lgi/v1"

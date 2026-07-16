@@ -4,17 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>U.S. ISO Generation Mix Tracker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
 <link rel="stylesheet" href="style.css">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="vendor/chart.umd.min.js"></script>
 </head>
 <body>
 <header>
   <h1>U.S. ISO Generation Mix Tracker</h1>
   <p id="subtitle" class="subtitle">Loading...</p>
+  <div id="status-chips" class="status-chips"></div>
 </header>
 
 <nav class="tabs">
   <button class="tab-btn active" data-view="national">National Trend</button>
+  <button class="tab-btn" data-view="fuel">Fuel Comparison</button>
   <button class="tab-btn" data-view="byiso">National by ISO</button>
   <button class="tab-btn" data-view="iso">Per-ISO Breakdown</button>
   <button class="tab-btn" data-view="snapshot">Latest Snapshot</button>
@@ -26,8 +29,25 @@
       <div class="range-presets" id="national-presets"></div>
       <label>From <input type="date" id="national-start"></label>
       <label>To <input type="date" id="national-end"></label>
+      <label class="check"><input type="checkbox" id="national-pct"> % of total</label>
     </div>
+    <p class="view-note" id="national-note"></p>
     <div class="chart-wrap"><canvas id="national-chart"></canvas></div>
+  </section>
+
+  <section id="view-fuel" class="view">
+    <div class="controls">
+      <label>Fuel
+        <select id="fuel-select"></select>
+      </label>
+      <div class="range-presets" id="fuel-presets"></div>
+      <label>From <input type="date" id="fuel-start"></label>
+      <label>To <input type="date" id="fuel-end"></label>
+      <label class="check"><input type="checkbox" id="fuel-smooth" checked> 7-day average</label>
+      <label class="check"><input type="checkbox" id="fuel-pct"> % of each ISO's total</label>
+    </div>
+    <p class="view-note">One line per ISO for the selected fuel. Use "% of each ISO's total" to compare mix share across markets of very different size; a sustained shift in a line is a fundamentals change (new capacity, retirement, or displacement), a brief spike is usually weather.</p>
+    <div class="chart-wrap"><canvas id="fuel-chart"></canvas></div>
   </section>
 
   <section id="view-byiso" class="view">
@@ -48,6 +68,7 @@
       <div class="range-presets" id="iso-presets"></div>
       <label>From <input type="date" id="iso-start"></label>
       <label>To <input type="date" id="iso-end"></label>
+      <label class="check"><input type="checkbox" id="iso-pct"> % of total</label>
     </div>
     <div class="chart-wrap"><canvas id="iso-chart"></canvas></div>
   </section>
@@ -57,16 +78,18 @@
     <div class="chart-wrap small"><canvas id="snapshot-national-chart"></canvas></div>
     <h2>Per-ISO snapshot</h2>
     <div id="snapshot-grid" class="snapshot-grid"></div>
-    <h2>Data freshness</h2>
+    <h2>Data freshness &amp; coverage</h2>
     <table id="health-table" class="health-table">
-      <thead><tr><th>ISO</th><th>Earliest date</th><th>Latest date</th><th>Days covered</th></tr></thead>
+      <thead><tr><th>ISO</th><th>Earliest date</th><th>Latest date</th><th>Days covered</th><th>Unfilled gap days</th></tr></thead>
       <tbody></tbody>
     </table>
+    <p class="view-note" id="gaps-note"></p>
   </section>
 </main>
 
 <footer>
-  <p>Data pulled directly from CAISO, PJM, ERCOT, MISO, SPP, NYISO and ISO-NE. Updated daily via GitHub Actions.</p>
+  <p>Data pulled directly from CAISO, ERCOT, MISO, SPP, NYISO and ISO-NE (PJM pending API-key approval). Updated daily around 9am ET via GitHub Actions.</p>
+  <p id="footer-quality"></p>
 </footer>
 
 <script src="app.js"></script>
