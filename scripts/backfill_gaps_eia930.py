@@ -38,7 +38,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import pandas as pd
 
-from src.connectors.base import http_session
+from src.connectors.base import http_session, wide_to_daily_mwh
 from src.db import connect, log_ingestion, upsert_generation
 from src.export import export_all
 from src.gaps import find_missing_dates, load_state, save_state
@@ -102,24 +102,21 @@ def _fuel_columns(columns: list[str]) -> dict[str, str]:
 
 
 def _daily_from_eia(df: pd.DataFrame, wanted_dates: set[dt.date]) -> pd.DataFrame:
-    date_col = "Data Date"
     df = df.copy()
-    df["date"] = pd.to_datetime(df[date_col], errors="coerce").dt.date
-    df = df[df["date"].isin(wanted_dates)]
+    df["date"] = pd.to_datetime(df["Data Date"], errors="coerce").dt.date
+    df = df[df["date"].isin(wanted_dates)].reset_index(drop=True)
     if df.empty:
         return pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"])
 
     fuel_cols = _fuel_columns(list(df.columns))
-    parts = []
-    for fuel, col in fuel_cols.items():
-        mw = pd.to_numeric(df[col].astype(str).str.replace(",", ""), errors="coerce")
-        parts.append(pd.DataFrame({"date": df["date"], "fuel_category": _canon_fuel(fuel), "mw": mw}))
-    combined = pd.concat(parts, ignore_index=True).dropna(subset=["mw"])
-    # Several EIA fuels can share one canonical bucket - sum per row-group
-    # first, then average hours and scale to daily MWh (mean MW * 24).
-    per_hour = combined.groupby(["date", "fuel_category"], as_index=False)["mw"].mean()
-    per_hour["generation_mwh"] = per_hour["mw"] * 24
-    return per_hour[["date", "fuel_category", "generation_mwh"]]
+    # EIA numbers can carry thousands separators - normalize before handing
+    # the columns to the shared aggregator.
+    for col in fuel_cols.values():
+        df[col] = pd.to_numeric(df[col].astype(str).str.replace(",", ""), errors="coerce")
+    # wide_to_daily_mwh sums columns sharing a canonical bucket per row
+    # (petroleum + other + unknown -> imports_other) before the mean(MW)*24.
+    category_map = {col: _canon_fuel(fuel) for fuel, col in fuel_cols.items()}
+    return wide_to_daily_mwh(df, df["date"], category_map)
 
 
 def main() -> None:

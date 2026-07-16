@@ -52,7 +52,7 @@ async function loadAllRows(meta) {
 // ---------------------------------------------------------------------------
 // Pivots. All values are converted MWh -> GWh for display.
 
-function pivotNational(rows, startDate, endDate, asPct) {
+function pivotNational(rows, usRows, startDate, endDate, asPct, showUs48) {
   const byDateCat = {};
   const totals = {};
   for (const r of rows) {
@@ -74,6 +74,32 @@ function pivotNational(rows, startDate, endDate, asPct) {
     pointRadius: 0,
     borderWidth: 1,
   }));
+
+  // EIA lower-48 national total as an unstacked dashed reference line, so
+  // "how much of the U.S. grid do the tracked ISOs cover" is readable at a
+  // glance. Hidden in % mode (shares of the tracked total wouldn't compare).
+  if (showUs48 && !asPct && usRows.length > 0) {
+    const usTotals = {};
+    for (const r of usRows) {
+      if (r.date < startDate || r.date > endDate) continue;
+      usTotals[r.date] = (usTotals[r.date] || 0) + r.mwh;
+    }
+    if (Object.keys(usTotals).length > 0) {
+      datasets.push({
+        label: "US lower-48 total (EIA)",
+        data: dates.map(d => (d in usTotals ? usTotals[d] / 1000 : null)),
+        type: "line",
+        borderColor: "#93a0b8",
+        backgroundColor: "#93a0b8",
+        borderDash: [6, 4],
+        borderWidth: 1.5,
+        fill: false,
+        pointRadius: 0,
+        spanGaps: true,
+        stack: "us48-reference",
+      });
+    }
+  }
   return { dates, datasets };
 }
 
@@ -327,8 +353,8 @@ function initDateInputs(startInput, endInput, range) {
 
 let nationalChart, fuelChart, byIsoChart, isoChart;
 
-function renderNational(rows, start, end, asPct) {
-  const { dates, datasets } = pivotNational(rows, start, end, asPct);
+function renderNational(rows, usRows, start, end, asPct, showUs48) {
+  const { dates, datasets } = pivotNational(rows, usRows, start, end, asPct, showUs48);
   if (nationalChart) nationalChart.destroy();
   nationalChart = new Chart(document.getElementById("national-chart"),
     stackedAreaConfig(dates, datasets, "GWh / day (national)", asPct));
@@ -370,24 +396,8 @@ function renderBarRows(container, mix, totalOverride) {
   }
 }
 
-function renderSnapshotNationalChart(mix) {
-  const sorted = [...mix].sort((a, b) => CATEGORIES.indexOf(a.fuel_category) - CATEGORIES.indexOf(b.fuel_category));
-  new Chart(document.getElementById("snapshot-national-chart"), {
-    type: "doughnut",
-    data: {
-      labels: sorted.map(m => LABELS[m.fuel_category] || m.fuel_category),
-      datasets: [{
-        data: sorted.map(m => m.generation_mwh),
-        backgroundColor: sorted.map(m => colorFor(m.fuel_category)),
-        borderColor: "#171d2b",
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { position: "right", labels: { color: "#e8ebf1", boxWidth: 12 } } },
-    },
-  });
+function renderSnapshotNationalBars(mix) {
+  renderBarRows(document.getElementById("snapshot-national-bars"), mix);
 }
 
 function renderSnapshotGrid(byIso) {
@@ -463,11 +473,15 @@ async function main() {
   setupTabs();
 
   const meta = await loadJSON("meta.json");
-  const [rows, snapshot, gaps] = await Promise.all([
+  const [allRows, snapshot, gaps] = await Promise.all([
     loadAllRows(meta),
     loadJSON("latest_snapshot.json"),
     loadJSON("gaps.json", true),
   ]);
+  // iso='US48' rows are EIA's lower-48 national reference - overlay only,
+  // never part of ISO sums or selectors.
+  const rows = allRows.filter(r => r.iso !== "US48");
+  const usRows = allRows.filter(r => r.iso === "US48");
   const range = meta.date_range;
 
   document.getElementById("subtitle").textContent =
@@ -477,17 +491,22 @@ async function main() {
   const isosPresent = uniqueSorted(rows.map(r => r.iso));
   document.getElementById("national-note").textContent =
     `National = sum of ${isosPresent.join(", ")}.` +
-    (isosPresent.includes("PJM") ? "" : " PJM is not included yet (awaiting API-key approval), so absolute totals understate the U.S. east.");
+    (isosPresent.includes("PJM") ? "" : " PJM is not included yet (awaiting API-key approval), so absolute totals understate the U.S. east.") +
+    (usRows.length > 0 ? " The dashed line is EIA's independently-measured lower-48 total - the space between it and the stack is PJM plus the non-ISO regions (the utility-run Southeast, Northwest and Southwest)." : "");
 
   // National trend
   const nStart = document.getElementById("national-start");
   const nEnd = document.getElementById("national-end");
   const nPct = document.getElementById("national-pct");
+  const nUs48 = document.getElementById("national-us48");
+  if (usRows.length > 0) document.getElementById("national-us48-wrap").hidden = false;
   initDateInputs(nStart, nEnd, range);
-  const refreshNational = () => renderNational(rows, nStart.value, nEnd.value, nPct.checked);
+  const refreshNational = () =>
+    renderNational(rows, usRows, nStart.value, nEnd.value, nPct.checked, nUs48.checked);
   nStart.addEventListener("change", refreshNational);
   nEnd.addEventListener("change", refreshNational);
   nPct.addEventListener("change", refreshNational);
+  nUs48.addEventListener("change", refreshNational);
   setupRangePresets("national-presets", nStart, nEnd, refreshNational, range, "1Y");
   refreshNational();
 
@@ -529,7 +548,7 @@ async function main() {
   refreshIso();
 
   // Latest snapshot
-  renderSnapshotNationalChart(snapshot.national);
+  renderSnapshotNationalBars(snapshot.national);
   renderSnapshotGrid(snapshot.by_iso);
   renderHealthTable(meta.iso_stats, gaps);
   const gapsNote = document.getElementById("gaps-note");

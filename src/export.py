@@ -57,7 +57,7 @@ def _interpolated_rows(conn) -> pd.DataFrame:
     generation table plus an `est` column."""
     from src.gaps import dates_to_ranges, find_missing_dates
 
-    isos = [r[0] for r in conn.execute("SELECT DISTINCT iso FROM generation").fetchall()]
+    isos = [r[0] for r in conn.execute("SELECT DISTINCT iso FROM generation WHERE iso != 'US48'").fetchall()]
     frames = []
     for iso in isos:
         missing = find_missing_dates(conn, iso)
@@ -134,8 +134,12 @@ def export_all(conn: duckdb.DuckDBPyConnection | None = None) -> None:
             },
         )
 
+    # iso='US48' is the EIA national reference overlay - it belongs in the
+    # year files (the dashboard reads it for the National Trend overlay) but
+    # not in the per-ISO snapshot or freshness stats, where it would read as
+    # a double-counted "ISO".
     per_iso_latest = conn.execute(
-        "SELECT iso, MAX(date) AS as_of FROM generation GROUP BY iso"
+        "SELECT iso, MAX(date) AS as_of FROM generation WHERE iso != 'US48' GROUP BY iso"
     ).df()
 
     snapshot_by_iso = {}
@@ -166,6 +170,7 @@ def export_all(conn: duckdb.DuckDBPyConnection | None = None) -> None:
         """
         SELECT iso, MIN(date) AS earliest, MAX(date) AS latest, COUNT(DISTINCT date) AS days_covered
         FROM generation
+        WHERE iso != 'US48'
         GROUP BY iso
         ORDER BY iso
         """
