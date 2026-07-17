@@ -382,7 +382,10 @@ function initDateInputs(startInput, endInput, range) {
 // series are remembered per view, surviving range/toggle changes that
 // rebuild the chart.
 
-const hiddenSeries = { national: new Set(), fuel: new Set(), byiso: new Set(), iso: new Set() };
+const US48_LABEL = "US lower-48 total (EIA)";
+// Fuel Comparison starts with the US48 national line hidden (it dwarfs the
+// per-ISO lines); the viewer ticks it on when they want national context.
+const hiddenSeries = { national: new Set(), fuel: new Set([US48_LABEL]), byiso: new Set(), iso: new Set() };
 
 function buildLegend(viewKey, chart) {
   const container = document.getElementById(`${viewKey}-legend`);

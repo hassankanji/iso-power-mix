@@ -32,7 +32,20 @@ def main():
     parser.add_argument("--start", type=parse_date, help="Override start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=parse_date, help="Override end date (YYYY-MM-DD), default yesterday")
     parser.add_argument("--no-export", action="store_true", help="Skip regenerating docs/data/*.json after the pull")
+    parser.add_argument("--storage-backfill", action="store_true",
+                        help="One-time: re-source every ISO's storage category from EIA net battery over full history, then export")
     args = parser.parse_args()
+
+    if args.storage_backfill:
+        from src.db import connect
+        from src.pipeline import sync_storage_from_eia
+        from src.schema import ISO_CODES as _ISO_CODES
+        conn = connect()
+        sync_storage_from_eia(conn, _ISO_CODES, dt.date.today() - dt.timedelta(days=1), full=True)
+        conn.close()
+        export_all()
+        print("\nStorage backfill from EIA complete.")
+        return
 
     isos = args.iso.split(",") if args.iso else None
     results = run_all(isos=isos, start_override=args.start, end_override=args.end)

@@ -110,9 +110,57 @@ def run_all(
     if start_override is None and end_override is None:
         repair_gaps(conn, targets, results)
         update_us48_reference(conn, end_date)
+        sync_storage_from_eia(conn, targets, end_date)
 
     conn.close()
     return results
+
+
+STORAGE_LOOKBACK_DAYS = 10
+
+
+def sync_storage_from_eia(conn, targets, end_date: dt.date, full: bool = False) -> None:
+    """Override each ISO's `storage` category with EIA's net battery figure.
+
+    The ISOs report storage on incompatible conventions: CAISO and ERCOT
+    publish true NET output (negative while the fleet charges), while MISO
+    and PJM's public generation feeds only include discharge (so they read
+    small-positive and never negative). For a generation-mix stack that must
+    sum to net generation, NET is the correct convention - counting battery
+    discharge as fresh generation double-counts energy already tallied when
+    it was first produced. EIA-930 reports net battery per balancing
+    authority on one consistent convention, so sourcing storage from EIA
+    makes every ISO agree.
+
+    Incremental by default (re-syncs the trailing window, since EIA revises
+    recent days); pass full=True for the one-time history backfill. Upserts
+    only the storage rows, leaving every other fuel from the ISO's own feed.
+    Silently skipped without an EIA key - storage then keeps native values.
+    """
+    if not eia.has_key():
+        return
+    isos = [i for i in targets if i in eia.RESPONDENTS and i != "US48"]
+    start = eia.EIA_EARLIEST if full else max(eia.EIA_EARLIEST, end_date - dt.timedelta(days=STORAGE_LOOKBACK_DAYS - 1))
+    for iso in isos:
+        try:
+            total = 0
+            cur = start
+            while cur <= end_date:
+                chunk_end = min(cur + dt.timedelta(days=182), end_date)
+                df = eia.fetch_daily(iso, cur, chunk_end)
+                storage = df[df["fuel_category"] == "storage"].copy() if not df.empty else df
+                if not storage.empty:
+                    storage["iso"] = iso
+                    total += upsert_generation(conn, storage[["date", "iso", "fuel_category", "generation_mwh"]])
+                cur = chunk_end + dt.timedelta(days=1)
+            if total:
+                avg = conn.execute(
+                    "SELECT AVG(generation_mwh) FROM generation WHERE iso=? AND fuel_category='storage' "
+                    "AND date > ?", [iso, end_date - dt.timedelta(days=30)],
+                ).fetchone()[0]
+                print(f"[{iso}] storage synced from EIA: {total} rows (last-30d avg {avg:.0f} MWh/day)")
+        except Exception as e:
+            print(f"[{iso}] storage sync from EIA failed ({e}) - keeping native storage")
 
 
 def update_us48_reference(conn, end_date: dt.date) -> None:
