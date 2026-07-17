@@ -28,10 +28,14 @@ Two data paths:
 
    Live-verified historical depth: 2014-01-01 onward returns real data;
    2013-06-01 and earlier return HTTP 500 consistently. EARLIEST_DATE is set
-   accordingly. "Today" is not yet available via this endpoint (MISO
-   publishes real-time generation "at 7am EST the day after"), so today's
-   date is always fetched via the no-auth path below instead, even when a
-   key is present.
+   accordingly. Individual days sometimes come back empty then succeed on a
+   later attempt (85 scattered "missing" days across 2014-2025 all
+   eventually returned data via the pipeline's per-run gap retries) - treat
+   empty LGI days as retryable, never as permanently absent.
+
+   "Today" is not yet available via this endpoint (MISO publishes real-time
+   generation "at 7am EST the day after"), so today's date is always fetched
+   via the no-auth path below instead, even when a key is present.
 
 2. No-auth "current window" path (always available, zero setup). MISO's
    public REST fuel mix API serves only Today / Yesterday / Latest

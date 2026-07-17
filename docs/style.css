@@ -140,6 +140,38 @@ input[type="date"], select {
   background: rgba(77, 157, 224, 0.15);
 }
 
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0 0 8px;
+}
+
+.legend-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.legend-check input { accent-color: var(--accent); cursor: pointer; }
+
+.legend-check .swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.legend-check .swatch.dashed {
+  height: 0;
+  border-top: 2px dashed #93a0b8;
+  background: transparent !important;
+}
+
 .chart-wrap {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -147,8 +179,6 @@ input[type="date"], select {
   padding: 16px;
   height: 480px;
 }
-
-.chart-wrap.small { height: 380px; max-width: 520px; }
 
 h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
 

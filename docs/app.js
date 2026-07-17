@@ -78,32 +78,42 @@ function pivotNational(rows, usRows, startDate, endDate, asPct, showUs48) {
   // EIA lower-48 national total as an unstacked dashed reference line, so
   // "how much of the U.S. grid do the tracked ISOs cover" is readable at a
   // glance. Hidden in % mode (shares of the tracked total wouldn't compare).
-  if (showUs48 && !asPct && usRows.length > 0) {
-    const usTotals = {};
-    for (const r of usRows) {
-      if (r.date < startDate || r.date > endDate) continue;
-      usTotals[r.date] = (usTotals[r.date] || 0) + r.mwh;
-    }
-    if (Object.keys(usTotals).length > 0) {
-      datasets.push({
-        label: "US lower-48 total (EIA)",
-        data: dates.map(d => (d in usTotals ? usTotals[d] / 1000 : null)),
-        type: "line",
-        borderColor: "#93a0b8",
-        backgroundColor: "#93a0b8",
-        borderDash: [6, 4],
-        borderWidth: 1.5,
-        fill: false,
-        pointRadius: 0,
-        spanGaps: true,
-        stack: "us48-reference",
-      });
-    }
+  if (showUs48 && !asPct) {
+    const overlay = us48OverlayDataset(usRows, dates, startDate, endDate, rec => rec.total / 1000);
+    if (overlay) datasets.push(overlay);
   }
   return { dates, datasets };
 }
 
-function pivotByIso(rows, startDate, endDate) {
+// Builds the dashed, unstacked US-lower-48 reference line dataset (or null
+// if there's nothing to draw). `valueFor` maps a US48 date-total map entry
+// to the plotted value, letting each view scale it appropriately.
+function us48OverlayDataset(usRows, dates, startDate, endDate, valueFor) {
+  if (usRows.length === 0) return null;
+  const usTotals = {};
+  for (const r of usRows) {
+    if (r.date < startDate || r.date > endDate) continue;
+    const rec = usTotals[r.date] || (usTotals[r.date] = { total: 0, byCat: {} });
+    rec.total += r.mwh;
+    rec.byCat[r.cat] = (rec.byCat[r.cat] || 0) + r.mwh;
+  }
+  if (Object.keys(usTotals).length === 0) return null;
+  return {
+    label: "US lower-48 total (EIA)",
+    data: dates.map(d => (d in usTotals ? valueFor(usTotals[d]) : null)),
+    type: "line",
+    borderColor: "#93a0b8",
+    backgroundColor: "#93a0b8",
+    borderDash: [6, 4],
+    borderWidth: 1.5,
+    fill: false,
+    pointRadius: 0,
+    spanGaps: true,
+    stack: "us48-reference",
+  };
+}
+
+function pivotByIso(rows, usRows, startDate, endDate, showUs48) {
   const byDateIso = {};
   const dateSet = new Set();
   const isoSet = new Set();
@@ -125,6 +135,10 @@ function pivotByIso(rows, startDate, endDate) {
     pointRadius: 0,
     borderWidth: 1,
   }));
+  if (showUs48) {
+    const overlay = us48OverlayDataset(usRows, dates, startDate, endDate, rec => rec.total / 1000);
+    if (overlay) datasets.push(overlay);
+  }
   return { dates, datasets };
 }
 
@@ -153,9 +167,10 @@ function pivotSingleIso(rows, iso, startDate, endDate, asPct) {
   return { dates, datasets };
 }
 
-// One line per ISO for a single fuel. Missing (date, iso) pairs become null
-// so the line visibly bridges gaps (spanGaps) instead of plunging to zero.
-function pivotFuelComparison(rows, cat, startDate, endDate, asPct, smooth) {
+// One line per ISO for a single fuel, plus the US48 national line for that
+// fuel (total national gas burn, etc.). Missing (date, iso) pairs become
+// null so lines visibly bridge gaps (spanGaps) instead of plunging to zero.
+function pivotFuelComparison(rows, usRows, cat, startDate, endDate, asPct, smooth) {
   const value = {};      // `${date}|${iso}` -> mwh of selected fuel
   const isoTotals = {};  // `${date}|${iso}` -> mwh across all fuels
   const dateSet = new Set();
@@ -188,6 +203,14 @@ function pivotFuelComparison(rows, cat, startDate, endDate, asPct, smooth) {
       borderWidth: 1.8,
       spanGaps: true,
     });
+  }
+  const overlay = us48OverlayDataset(usRows, dates, startDate, endDate, rec => {
+    const v = rec.byCat[cat] || 0;
+    return asPct ? (rec.total > 0 ? (v / rec.total) * 100 : 0) : v / 1000;
+  });
+  if (overlay) {
+    if (smooth) overlay.data = movingAverage(overlay.data, 7);
+    datasets.push(overlay);
   }
   return { dates, datasets };
 }
@@ -240,12 +263,14 @@ function stackedAreaConfig(dates, datasets, yLabel, asPct) {
         },
       },
       plugins: {
-        legend: { labels: { color: "#e8ebf1", boxWidth: 12 } },
+        legend: { display: false }, // replaced by the checkbox legend (buildLegend)
         tooltip: {
           callbacks: {
             label: (ctx) => `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}${unit}`,
             footer: asPct ? undefined : (items) => {
-              const total = items.reduce((s, i) => s + i.parsed.y, 0);
+              const total = items
+                .filter(i => i.dataset.stack !== "us48-reference")
+                .reduce((s, i) => s + i.parsed.y, 0);
               return `Total: ${fmt(total)} GWh`;
             },
           },
@@ -275,7 +300,7 @@ function multiLineConfig(dates, datasets, yLabel, asPct) {
         },
       },
       plugins: {
-        legend: { labels: { color: "#e8ebf1", boxWidth: 12 } },
+        legend: { display: false }, // replaced by the checkbox legend (buildLegend)
         tooltip: {
           itemSort: (a, b) => b.parsed.y - a.parsed.y,
           callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}${unit}` },
@@ -351,6 +376,41 @@ function initDateInputs(startInput, endInput, range) {
 // ---------------------------------------------------------------------------
 // Views
 
+// ---------------------------------------------------------------------------
+// Checkbox legend: replaces Chart.js's click-a-label-to-hide legend (which
+// reads as static text) with explicit include/exclude checkboxes. Hidden
+// series are remembered per view, surviving range/toggle changes that
+// rebuild the chart.
+
+const hiddenSeries = { national: new Set(), fuel: new Set(), byiso: new Set(), iso: new Set() };
+
+function buildLegend(viewKey, chart) {
+  const container = document.getElementById(`${viewKey}-legend`);
+  if (!container) return;
+  container.innerHTML = "";
+  const hidden = hiddenSeries[viewKey];
+  chart.data.datasets.forEach((ds, i) => {
+    if (hidden.has(ds.label)) chart.setDatasetVisibility(i, false);
+    const label = document.createElement("label");
+    label.className = "legend-check";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !hidden.has(ds.label);
+    box.addEventListener("change", () => {
+      box.checked ? hidden.delete(ds.label) : hidden.add(ds.label);
+      chart.setDatasetVisibility(i, box.checked);
+      chart.update();
+    });
+    const swatch = document.createElement("span");
+    swatch.className = "swatch";
+    swatch.style.background = ds.borderColor || ds.backgroundColor;
+    if (ds.borderDash) swatch.classList.add("dashed");
+    label.append(box, swatch, document.createTextNode(ds.label));
+    container.appendChild(label);
+  });
+  chart.update();
+}
+
 let nationalChart, fuelChart, byIsoChart, isoChart;
 
 function renderNational(rows, usRows, start, end, asPct, showUs48) {
@@ -358,25 +418,29 @@ function renderNational(rows, usRows, start, end, asPct, showUs48) {
   if (nationalChart) nationalChart.destroy();
   nationalChart = new Chart(document.getElementById("national-chart"),
     stackedAreaConfig(dates, datasets, "GWh / day (national)", asPct));
+  buildLegend("national", nationalChart);
 }
 
-function renderFuel(rows, cat, start, end, asPct, smooth) {
-  const { dates, datasets } = pivotFuelComparison(rows, cat, start, end, asPct, smooth);
+function renderFuel(rows, usRows, cat, start, end, asPct, smooth) {
+  const { dates, datasets } = pivotFuelComparison(rows, usRows, cat, start, end, asPct, smooth);
   if (fuelChart) fuelChart.destroy();
-  const yLabel = asPct ? `% of each ISO's daily total` : `GWh / day of ${LABELS[cat]}`;
+  const yLabel = asPct ? `% of each area's daily total` : `GWh / day of ${LABELS[cat]}`;
   fuelChart = new Chart(document.getElementById("fuel-chart"), multiLineConfig(dates, datasets, yLabel, asPct));
+  buildLegend("fuel", fuelChart);
 }
 
-function renderByIso(rows, start, end) {
-  const { dates, datasets } = pivotByIso(rows, start, end);
+function renderByIso(rows, usRows, start, end, showUs48) {
+  const { dates, datasets } = pivotByIso(rows, usRows, start, end, showUs48);
   if (byIsoChart) byIsoChart.destroy();
   byIsoChart = new Chart(document.getElementById("byiso-chart"), stackedAreaConfig(dates, datasets, "GWh / day (by ISO)", false));
+  buildLegend("byiso", byIsoChart);
 }
 
 function renderIso(rows, iso, start, end, asPct) {
   const { dates, datasets } = pivotSingleIso(rows, iso, start, end, asPct);
   if (isoChart) isoChart.destroy();
   isoChart = new Chart(document.getElementById("iso-chart"), stackedAreaConfig(dates, datasets, `GWh / day (${iso})`, asPct));
+  buildLegend("iso", isoChart);
 }
 
 function renderBarRows(container, mix, totalOverride) {
@@ -492,8 +556,8 @@ async function main() {
   const isosPresent = uniqueSorted(rows.map(r => r.iso));
   document.getElementById("national-note").textContent =
     `National = sum of ${isosPresent.join(", ")}.` +
-    (isosPresent.includes("PJM") ? "" : " PJM is not included yet (awaiting API-key approval), so absolute totals understate the U.S. east.") +
-    (usRows.length > 0 ? " The dashed line is EIA's independently-measured lower-48 total - the space between it and the stack is PJM plus the non-ISO regions (the utility-run Southeast, Northwest and Southwest)." : "");
+    (isosPresent.includes("PJM") ? "" : " PJM is not included yet, so absolute totals understate the U.S. east.") +
+    (usRows.length > 0 ? " The dashed line is EIA's independently-measured lower-48 total - the space between it and the stack is the non-ISO regions (the utility-run Southeast, Northwest and Southwest, about a third of U.S. generation)." : "");
 
   // National trend
   const nStart = document.getElementById("national-start");
@@ -521,7 +585,7 @@ async function main() {
   const fPct = document.getElementById("fuel-pct");
   initDateInputs(fStart, fEnd, range);
   const refreshFuel = () =>
-    renderFuel(rows, fuelSelect.value, fStart.value, fEnd.value, fPct.checked, fSmooth.checked);
+    renderFuel(rows, usRows, fuelSelect.value, fStart.value, fEnd.value, fPct.checked, fSmooth.checked);
   for (const el of [fuelSelect, fStart, fEnd, fSmooth, fPct]) el.addEventListener("change", refreshFuel);
   setupRangePresets("fuel-presets", fStart, fEnd, refreshFuel, range, "1Y");
   refreshFuel();
@@ -529,10 +593,13 @@ async function main() {
   // National by ISO
   const bStart = document.getElementById("byiso-start");
   const bEnd = document.getElementById("byiso-end");
+  const bUs48 = document.getElementById("byiso-us48");
+  if (usRows.length > 0) document.getElementById("byiso-us48-wrap").hidden = false;
   initDateInputs(bStart, bEnd, range);
-  const refreshByIso = () => renderByIso(rows, bStart.value, bEnd.value);
+  const refreshByIso = () => renderByIso(rows, usRows, bStart.value, bEnd.value, bUs48.checked);
   bStart.addEventListener("change", refreshByIso);
   bEnd.addEventListener("change", refreshByIso);
+  bUs48.addEventListener("change", refreshByIso);
   setupRangePresets("byiso-presets", bStart, bEnd, refreshByIso, range, "1Y");
   refreshByIso();
 
