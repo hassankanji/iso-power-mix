@@ -21,6 +21,10 @@ on:
         description: "Force end date YYYY-MM-DD (blank = yesterday)"
         required: false
         default: ""
+      storage_backfill:
+        description: "Set to 'yes' to re-source all storage history from EIA (one-time), skipping the normal pull"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -59,11 +63,15 @@ jobs:
           ISONE_PASSWORD: ${{ secrets.ISONE_PASSWORD }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: |
-          ARGS=""
-          if [ -n "${{ github.event.inputs.iso }}" ]; then ARGS="$ARGS --iso ${{ github.event.inputs.iso }}"; fi
-          if [ -n "${{ github.event.inputs.start }}" ]; then ARGS="$ARGS --start ${{ github.event.inputs.start }}"; fi
-          if [ -n "${{ github.event.inputs.end }}" ]; then ARGS="$ARGS --end ${{ github.event.inputs.end }}"; fi
-          python scripts/run_pipeline.py $ARGS
+          if [ "${{ github.event.inputs.storage_backfill }}" = "yes" ]; then
+            python scripts/run_pipeline.py --storage-backfill
+          else
+            ARGS=""
+            if [ -n "${{ github.event.inputs.iso }}" ]; then ARGS="$ARGS --iso ${{ github.event.inputs.iso }}"; fi
+            if [ -n "${{ github.event.inputs.start }}" ]; then ARGS="$ARGS --start ${{ github.event.inputs.start }}"; fi
+            if [ -n "${{ github.event.inputs.end }}" ]; then ARGS="$ARGS --end ${{ github.event.inputs.end }}"; fi
+            python scripts/run_pipeline.py $ARGS
+          fi
 
       - name: Commit updated data
         if: always()

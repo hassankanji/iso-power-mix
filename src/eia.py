@@ -66,7 +66,11 @@ _FUELTYPE_TO_CANONICAL = {
     "SUN": "solar",
     "WND": "wind",
     "BAT": "storage",
-    "PS": "storage",
+    # Pumped storage is water-based; the ISOs' own feeds fold it into hydro,
+    # and "storage" here means batteries (to match them). Keeping PS out of
+    # storage also stops it inflating storage for BAs with big pumped-hydro
+    # (ISO-NE's Northfield Mountain / Bear Swamp were adding ~8 GWh/day).
+    "PS": "hydro",
     "GEO": "other_renewables",
     "BIO": "other_renewables",
     "SNB": "solar",

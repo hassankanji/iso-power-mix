@@ -38,10 +38,16 @@ def main():
 
     if args.storage_backfill:
         from src.db import connect
-        from src.pipeline import sync_storage_from_eia
+        from src.pipeline import sync_storage_from_eia, update_us48_reference
         from src.schema import ISO_CODES as _ISO_CODES
         conn = connect()
-        sync_storage_from_eia(conn, _ISO_CODES, dt.date.today() - dt.timedelta(days=1), full=True)
+        yesterday = dt.date.today() - dt.timedelta(days=1)
+        # Re-source every ISO's storage (batteries, net where the BA reports
+        # it that way), and rebuild US48 so its hydro/storage split reflects
+        # the PS->hydro reclassification too.
+        sync_storage_from_eia(conn, _ISO_CODES, yesterday, full=True)
+        conn.execute("DELETE FROM generation WHERE iso = 'US48'")
+        update_us48_reference(conn, yesterday)
         conn.close()
         export_all()
         print("\nStorage backfill from EIA complete.")
