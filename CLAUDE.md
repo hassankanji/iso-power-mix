@@ -92,6 +92,10 @@ no full fuel-mix product and needs a B2C bearer token besides the key.
 
 ## Conventions
 
+- Browsers and the Pages CDN cache app.js/style.css hard. **Bump the `?v=N`
+  query strings in docs/index.html whenever either file changes**, or users
+  see a stale mix of old script + new page.
+
 - Work on a `claude/...` branch; the user merges PRs to main themselves.
   Never push to main directly. Data commits from workflow runs land on
   whatever branch was dispatched — sync/rebase before pushing local work.
