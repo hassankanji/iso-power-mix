@@ -50,6 +50,14 @@ changes daily — this keeps the repo small forever. Never commit
 5. **Interpolated rows (est flag) are exports-only**: derived fresh each
    export for interior gaps ≤10 days, skipped by the DB rebuild, replaced
    automatically when real data arrives.
+5b. **Storage is NET (discharge − charge) and sourced from EIA**, not the
+   ISO feeds - CAISO/ERCOT report net but MISO/PJM report discharge-only, so
+   `sync_storage_from_eia` overrides every ISO's storage rows with EIA net
+   battery (BAT) for one consistent convention. Pumped storage (EIA `PS`)
+   maps to hydro, not storage. Some small BAs still file discharge-only with
+   EIA (small positive) - that's a source limitation, not a bug. Re-run the
+   one-time full re-source with `run_pipeline.py --storage-backfill` (or the
+   daily workflow's `storage_backfill=yes` input) after touching this.
 6. **Missing credentials are "skipped", never "failed".** Real failures and
    staleness >8 days exit non-zero so the Actions run goes red and emails
    the owner. Don't break this contract — it's the monitoring.
