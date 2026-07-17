@@ -33,6 +33,7 @@
       <label class="check" id="national-us48-wrap" hidden><input type="checkbox" id="national-us48" checked> US total (EIA)</label>
     </div>
     <p class="view-note" id="national-note"></p>
+    <div class="chart-legend" id="national-legend"></div>
     <div class="chart-wrap"><canvas id="national-chart"></canvas></div>
   </section>
 
@@ -47,7 +48,8 @@
       <label class="check"><input type="checkbox" id="fuel-smooth" checked> 7-day average</label>
       <label class="check"><input type="checkbox" id="fuel-pct"> % of each ISO's total</label>
     </div>
-    <p class="view-note">One line per ISO for the selected fuel. Use "% of each ISO's total" to compare mix share across markets of very different size; a sustained shift in a line is a fundamentals change (new capacity, retirement, or displacement), a brief spike is usually weather.</p>
+    <p class="view-note">One line per ISO for the selected fuel, plus the US lower-48 total (EIA) for national context. Use "% of each ISO's total" to compare mix share across markets of very different size.</p>
+    <div class="chart-legend" id="fuel-legend"></div>
     <div class="chart-wrap"><canvas id="fuel-chart"></canvas></div>
   </section>
 
@@ -56,8 +58,10 @@
       <div class="range-presets" id="byiso-presets"></div>
       <label>From <input type="date" id="byiso-start"></label>
       <label>To <input type="date" id="byiso-end"></label>
+      <label class="check" id="byiso-us48-wrap" hidden><input type="checkbox" id="byiso-us48" checked> US total (EIA)</label>
     </div>
-    <p class="view-note">Total daily generation contributed by each ISO. The stacked total here equals the fuel-type total on the National Trend tab for the same dates. A band dropping to zero means that ISO has no data for those days (publishing lag or pre-coverage), not zero generation.</p>
+    <p class="view-note">Total daily generation contributed by each ISO. The stacked total here equals the fuel-type total on the National Trend tab for the same dates.</p>
+    <div class="chart-legend" id="byiso-legend"></div>
     <div class="chart-wrap"><canvas id="byiso-chart"></canvas></div>
   </section>
 
@@ -71,6 +75,7 @@
       <label>To <input type="date" id="iso-end"></label>
       <label class="check"><input type="checkbox" id="iso-pct"> % of total</label>
     </div>
+    <div class="chart-legend" id="iso-legend"></div>
     <div class="chart-wrap"><canvas id="iso-chart"></canvas></div>
   </section>
 

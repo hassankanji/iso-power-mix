@@ -16,7 +16,8 @@ src/db.py             DuckDB storage. THE .duckdb FILE IS NOT COMMITTED - it is 
                       from docs/data/iso_daily_<year>.json on every fresh checkout
 src/export.py         DB -> docs/data/*.json (per-year files, snapshot, meta) + interpolation
 docs/                 static dashboard (vanilla JS + vendored Chart.js, no build step)
-.github/workflows/    daily.yml (13:00 UTC cron + dispatch w/ iso|start|end inputs),
+.github/workflows/    daily.yml (12:00 + 16:30 UTC crons - set ~90 min early because
+                      GitHub delays cron starts; dispatch w/ iso|start|end inputs),
                       backfill-gaps.yml (keyless EIA bulk), reconcile.yml (EIA audit)
 ```
 

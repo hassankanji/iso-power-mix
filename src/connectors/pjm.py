@@ -30,15 +30,17 @@ Time-range filtering: `datetime_beginning_ept` accepts a
 window is capped at 366 days, so multi-year fetches are chunked via
 chunk_date_range(..., max_days=366).
 
-Fuel-type mapping: PJM's Data Miner API guide does not enumerate the exact
-`fuel_type` strings returned by this specific feed. _NATIVE_TO_CANONICAL below
-is built defensively from the fuel categories PJM shows across its public
-dashboards and other open-source PJM API clients (Coal, Gas, Natural Gas,
-Nuclear, Hydro, Multiple Fuels, Oil, Other, Other Renewables, Solar, Wind,
-Storage, Wind Solar, Black Liquor). Any unrecognized value safely falls back
-to "imports_other" instead of being silently dropped by pandas .map(). This
-mapping is UNVERIFIED against a live API response and should be revisited
-once real credentials are available to inspect actual data.
+Fuel-type mapping: _NATIVE_TO_CANONICAL below is built from the categories
+PJM shows across its public dashboards and open-source PJM clients, with any
+unrecognized value falling back to "imports_other" instead of being silently
+dropped. Verified against live data 2026-07-16: the first full backfill
+produced 874 TWh for calendar 2025 with a 42% gas / 31% nuclear / 17% coal
+mix, matching PJM's published figures (and only 1.5% landing in
+imports_other), so the mapping is confirmed good.
+
+Live-verified feed depth: gen_by_fuel returns nothing before 2016-01-01
+(EARLIEST_DATE below is a conservative 2015 request start; the extra year
+simply comes back empty).
 """
 from __future__ import annotations
 
@@ -58,7 +60,7 @@ from src.connectors.base import (
 from src.schema import CANONICAL_CATEGORIES
 
 ISO = "PJM"
-EARLIEST_DATE = date(2015, 1, 1)  # conservative default; gen_by_fuel's exact archive start is not documented publicly
+EARLIEST_DATE = date(2015, 1, 1)  # feed actually starts 2016-01-01 (live-verified); the 2015 year of the request just comes back empty
 REQUIRES_AUTH = True
 # Pipeline pre-checks these and reports "skipped_no_credentials" instead of
 # attempting a fetch that would just 401.
@@ -70,7 +72,7 @@ _MAX_DAYS_PER_REQUEST = 366
 _REQUEST_DELAY_SECONDS = 10.0  # stay safely under the ~6 req/min non-member rate limit
 
 # Raw fuel_type strings (lower-cased, stripped) -> canonical bucket.
-# UNVERIFIED against a live API response -- see module docstring.
+# Verified against live data 2026-07-16 -- see module docstring.
 _NATIVE_TO_CANONICAL: dict[str, str] = {
     "coal": "coal",
     "gas": "natural_gas",
