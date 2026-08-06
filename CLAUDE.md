@@ -16,6 +16,10 @@ src/db.py             DuckDB storage. THE .duckdb FILE IS NOT COMMITTED - it is 
                       from docs/data/iso_daily_<year>.json on every fresh checkout
 src/export.py         DB -> docs/data/*.json (per-year files, snapshot, meta) + interpolation
 docs/                 static dashboard (vanilla JS + vendored Chart.js, no build step)
+                      The Live tab is the one part that talks to the network at
+                      runtime: it calls api.eia.gov (US48 hourly, CORS is open)
+                      from the browser on demand, with the READER's own key from
+                      localStorage - never a committed key, never the pipeline.
 .github/workflows/    daily.yml (12:00 + 16:30 UTC crons - set ~90 min early because
                       GitHub delays cron starts; dispatch w/ iso|start|end inputs),
                       backfill-gaps.yml (keyless EIA bulk), reconcile.yml (EIA audit)
@@ -50,7 +54,12 @@ changes daily — this keeps the repo small forever. Never commit
 5. **Interpolated rows (est flag) are exports-only**: derived fresh each
    export for interior gaps ≤10 days, skipped by the DB rebuild, replaced
    automatically when real data arrives.
-6. **Missing credentials are "skipped", never "failed".** Real failures and
+6. **EIA API queries must be bounded by `start`.** An unbounded
+   sort-by-period-desc hourly query makes EIA scan the whole history and
+   answer 503 after ~35s (measured 2026-08-06, via a runner - the sandbox
+   can't reach eia.gov). Both `src/eia.py` and the dashboard's Live tab
+   always pass an explicit window.
+7. **Missing credentials are "skipped", never "failed".** Real failures and
    staleness >8 days exit non-zero so the Actions run goes red and emails
    the owner. Don't break this contract — it's the monitoring.
 
