@@ -45,13 +45,22 @@ So ERCOT is always complete to yesterday; recent weeks firm up from preliminary/
 
 ## The dashboard
 
-1. **National Trend** — stacked daily generation by fuel across all 7 ISOs, with EIA's lower-48 total as a dashed overlay. "% of total" switches to mix share (best for spotting gas↔coal displacement).
-2. **Fuel Comparison** — pick a fuel (defaults to Natural Gas): one line per ISO plus the US48 national line, 7-day smoothing on by default, "% of each area's total" to normalize market size away. *The US48 gas line is total U.S. gas burn.*
-3. **National by ISO** — each ISO's total contribution, stacked, with the same US48 overlay.
-4. **Per-ISO Breakdown** — full fuel stack for one ISO.
-5. **Latest Snapshot** — every ISO's most recent day as sorted % bars, freshness table, and gap status.
+1. **National Trend** — daily generation by fuel across all 7 ISOs, with EIA's lower-48 total as a dashed overlay. "% of total" switches to mix share (best for spotting gas↔coal displacement).
+2. **Fuel Comparison** — pick a fuel (defaults to Natural Gas): one line per ISO plus the US48 national line, 7-day smoothing on by default, "% of each area's total" to normalize market size away. *The US48 gas line is total U.S. gas burn.* Switched to **Stacked**, the same view becomes total ISO gas burn split by market, against that national line.
+3. **National by ISO** — each ISO's total contribution, with the same US48 overlay.
+4. **Per-ISO Breakdown** — full fuel mix for one ISO.
+5. **Latest Snapshot** — every ISO's most recent day, in **GWh/TWh with the share alongside** and a daily total per market, plus the freshness table and gap status.
+6. **Live (EIA-930)** — national generation *right now*, not yesterday. See below.
 
-Every chart has checkbox legends (untick to exclude a series), Bloomberg-style range presets (1D→Max, default 1Y), and free date pickers. Windows under ~2 weeks render as bars.
+Every chart has a **Stacked / Lines** switch: stacked answers "what was the total and who contributed", lines answer "where is this one series going" without the series below it moving the baseline. Also checkbox legends (untick to exclude a series), Bloomberg-style range presets (1D→Max, default 1Y), and free date pickers. Stacked windows under ~2 weeks render as bars.
+
+### The Live tab
+
+Everything else here is settled daily data, gated by the slowest ISO's publication schedule — at best yesterday. The Live tab skips the pipeline entirely and reads **EIA-930's hourly lower-48 aggregate** (respondent `US48`) straight from the EIA API in your browser: total generation and the split by fuel for the most recently published hour, each fuel's change against the same hour yesterday, and the last 48 hours as a chart. EIA typically posts an hour 1–3 hours after it ends, which is the closest to real-time any free public national source gets. Values are average MW over the hour, shown as GW (the rest of the site is energy per day, in GWh).
+
+It fetches **only when you open the tab or press Refresh** — no polling, no Actions minutes, no commits. The last pull is cached in the browser so the tab is never blank.
+
+**One-time setup:** the tab asks for a free [EIA API key](https://www.eia.gov/opendata/register.php) (instant, email only), stored in your browser's local storage. It is deliberately *not* baked into the site: this repo is public, and a key committed here would be a published secret. Each reader of the dashboard adds their own; "Forget the stored EIA key" clears it. Note this is separate from the repo's `EIA_API_KEY` Actions secret, which the daily pipeline uses server-side.
 
 ### Reading the national picture
 
