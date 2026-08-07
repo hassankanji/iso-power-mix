@@ -4,6 +4,10 @@ name: Reconcile vs EIA-930
 # independent measurements and commits docs/data/reconciliation.json.
 # Needs the EIA_API_KEY secret. Run it after any connector change, or
 # whenever the numbers feel off.
+#
+# The `mode` input also makes this the general "ask EIA a question from a
+# runner" workflow - api.eia.gov is unreachable from the dev sandbox, so
+# scripts/diagnose_storage.py has no other way to run.
 
 on:
   workflow_dispatch:
@@ -12,6 +16,10 @@ on:
         description: "Trailing full days to compare"
         required: false
         default: "30"
+      mode:
+        description: "reconcile (default) or diagnose-storage"
+        required: false
+        default: "reconcile"
 
 permissions:
   contents: write
@@ -31,11 +39,19 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Reconcile
+        if: github.event.inputs.mode != 'diagnose-storage'
         env:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python scripts/reconcile_eia.py --days ${{ github.event.inputs.days }}
 
+      - name: Diagnose storage convention
+        if: github.event.inputs.mode == 'diagnose-storage'
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: python scripts/diagnose_storage.py
+
       - name: Commit report
+        if: github.event.inputs.mode != 'diagnose-storage'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
