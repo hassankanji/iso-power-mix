@@ -30,6 +30,8 @@ import datetime as dt
 import os
 import traceback
 
+import requests
+
 from src import eia
 from src.connectors import CONNECTORS
 from src.db import connect, latest_date_for_iso, log_ingestion, upsert_generation
@@ -46,15 +48,40 @@ GAP_REPAIR_MAX_DAYS_PER_RUN = 30
 EIA_FILL_MAX_DAYS_PER_RUN = 120
 US48_LOOKBACK_DAYS = 7
 
+# A status meaning "the ISO's host was unreachable this run". Distinct from
+# "failed" because it says nothing about our code or the data - portal.spp.org
+# timing out for six minutes (runs #56 and #57, both green again on the next
+# run) is weather, not a defect. The next run's lookback window re-fetches the
+# same days, so a single miss self-heals; only genuine rot, caught by the
+# staleness check in scripts/run_pipeline.py, is worth an email.
+UNREACHABLE = "failed_unreachable"
+FAILED = "failed"
+_NOT_THE_ISO_S_TURN = (UNREACHABLE, FAILED, "skipped_no_credentials")
+
 
 def _missing_env(names: list[str]) -> list[str]:
     return [v for v in names if not os.environ.get(v)]
+
+
+def _classify(exc: Exception) -> str:
+    """Transport-level failure vs everything else. Connection errors, connect
+    and read timeouts, and urllib3's retry-exhausted wrapper all mean we never
+    got an answer; an HTTP 4xx/5xx, a parse error or a KeyError means we did
+    get one and could not use it - that is ours to fix."""
+    transient = (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        requests.exceptions.RetryError,
+        requests.exceptions.ChunkedEncodingError,
+    )
+    return UNREACHABLE if isinstance(exc, transient) else FAILED
 
 
 def run_all(
     isos: list[str] | None = None,
     start_override: dt.date | None = None,
     end_override: dt.date | None = None,
+    us48_start: dt.date | None = None,
 ) -> dict[str, str]:
     conn = connect()
     end_date = end_override or (dt.date.today() - dt.timedelta(days=1))
@@ -100,33 +127,50 @@ def run_all(
             print(f"[{iso}] wrote {rows} rows")
             results[iso] = "success"
         except Exception as e:
-            log_ingestion(conn, iso, end_date, "failed", 0, str(e))
-            print(f"[{iso}] FAILED: {e}")
-            traceback.print_exc()
-            results[iso] = "failed"
+            status = _classify(e)
+            log_ingestion(conn, iso, end_date, status, 0, str(e))
+            if status == UNREACHABLE:
+                print(f"[{iso}] UNREACHABLE: {e}")
+                print(f"[{iso}] host did not answer - the next run re-fetches these days; not treated as a failure unless the data goes stale")
+            else:
+                print(f"[{iso}] FAILED: {e}")
+                traceback.print_exc()
+            results[iso] = status
 
     # Gap repair only makes sense for a normal incremental run - an explicit
     # --start/--end run already IS a manual repair of that window.
     if start_override is None and end_override is None:
         repair_gaps(conn, targets, results)
-        update_us48_reference(conn, end_date)
+        update_us48_reference(conn, end_date, us48_start)
+    elif us48_start is not None:
+        # ...but an explicit US48 rebuild is worth honouring on any run, so a
+        # definition change (see src/schema.py on storage) can be re-derived
+        # over the whole reference series without also re-pulling every ISO.
+        update_us48_reference(conn, end_date, us48_start)
 
     conn.close()
     return results
 
 
-def update_us48_reference(conn, end_date: dt.date) -> None:
+def update_us48_reference(conn, end_date: dt.date, start_override: dt.date | None = None) -> None:
     """Maintain the iso='US48' lower-48 national reference series from EIA.
     First run backfills from EIA's 2018-07-01 start; after that it's an
     incremental pull with a small overlap (EIA revises recent days). Skipped
-    silently without an EIA key - it's an overlay, never load-bearing."""
+    silently without an EIA key - it's an overlay, never load-bearing.
+
+    `start_override` forces a re-pull from that date, replacing what is
+    already stored - the way to re-derive the whole series after a definition
+    change rather than only the last week of it."""
     if not eia.has_key():
         print("[US48] skipped: EIA_API_KEY not set (national reference overlay stays absent - see README)")
         return
     latest = latest_date_for_iso(conn, "US48")
-    start = eia.EIA_EARLIEST if latest is None else min(
-        latest + dt.timedelta(days=1), end_date - dt.timedelta(days=US48_LOOKBACK_DAYS - 1)
-    )
+    if start_override is not None:
+        start = max(start_override, eia.EIA_EARLIEST)
+    elif latest is None:
+        start = eia.EIA_EARLIEST
+    else:
+        start = min(latest + dt.timedelta(days=1), end_date - dt.timedelta(days=US48_LOOKBACK_DAYS - 1))
     if start > end_date:
         print("[US48] reference series up to date")
         return
@@ -167,7 +211,7 @@ def repair_gaps(conn, targets: list[str], results: dict[str, str]) -> None:
             continue
         # Don't burn retry attempts when this ISO couldn't fetch at all today,
         # or when the env vars its historical path needs aren't set.
-        if results.get(iso) in ("failed", "skipped_no_credentials"):
+        if results.get(iso) in _NOT_THE_ISO_S_TURN:
             continue
         repair_env = _missing_env(getattr(connector, "GAP_REPAIR_ENV", []))
         if repair_env:

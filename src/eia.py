@@ -58,6 +58,11 @@ RESPONDENTS = {
     "US48": ("US48", "Eastern", -5),
 }
 
+# Codes and official names verified against the live US48 feed 2026-08-07
+# (scripts/diagnose_storage.py section 4). OES/UES/WNB were absent from this
+# map before that and were silently landing in imports_other - UES ("Unknown
+# energy storage") alone carried -28 GWh over a five-day window, i.e. real
+# charging energy booked as "other".
 _FUELTYPE_TO_CANONICAL = {
     "COL": "coal",
     "NG": "natural_gas",
@@ -65,15 +70,22 @@ _FUELTYPE_TO_CANONICAL = {
     "WAT": "hydro",
     "SUN": "solar",
     "WND": "wind",
-    "BAT": "storage",
-    "PS": "storage",
+    "BAT": "storage",   # Battery storage
+    "PS": "storage",    # Pumped storage
+    "OES": "storage",   # Other energy storage
+    "UES": "storage",   # Unknown energy storage
     "GEO": "other_renewables",
     "BIO": "other_renewables",
-    "SNB": "solar",
+    "SNB": "solar",     # Solar with integrated battery storage
+    "WNB": "wind",      # Wind with integrated battery storage
     "OIL": "imports_other",
     "OTH": "imports_other",
     "UNK": "imports_other",
 }
+
+# The codes whose hourly values are net of charging and therefore have to be
+# clipped per hour rather than per day (see src/schema.py).
+_STORAGE_CODES = [code for code, canon in _FUELTYPE_TO_CANONICAL.items() if canon == "storage"]
 
 
 def has_key() -> bool:
@@ -131,6 +143,52 @@ def _daily_route(session, respondent: str, timezone: str, start: dt.date, end: d
     return out.rename(columns={"mwh": "generation_mwh"})
 
 
+def _storage_daily(session, respondent: str, utc_offset: int, start: dt.date, end: dt.date) -> pd.DataFrame:
+    """Daily storage DISCHARGE for one respondent, built from hourly values.
+
+    The daily route hands back storage already netted over the day, and a net
+    daily total cannot be turned back into discharge - so storage is the one
+    bucket we always rebuild from the hourly route, clipping each hour at
+    zero before summing into local days. Faceting to the storage codes keeps
+    this to a few hundred rows a day, small next to the daily route it
+    supplements. Returns an empty frame when the respondent reports no
+    storage at all (CISO, PJM and NYIS do not)."""
+    rows = _get_pages(
+        session,
+        "fuel-type-data",
+        {
+            "frequency": "hourly",
+            "data[0]": "value",
+            "facets[respondent][]": respondent,
+            "facets[fueltype][]": _STORAGE_CODES,  # requests repeats the key per code
+            "start": f"{(start - dt.timedelta(days=1)).isoformat()}T00",
+            "end": f"{(end + dt.timedelta(days=1)).isoformat()}T23",
+        },
+    )
+    if not rows:
+        return pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"])
+    df = pd.DataFrame(rows)
+    # Belt and braces: honour the facet client-side too, so a route that ever
+    # ignores it cannot fold non-storage fuels into this number.
+    df = df[df["fueltype"].str.upper().isin(_STORAGE_CODES)]
+    if df.empty:
+        return pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"])
+    ts = pd.to_datetime(df["period"], format="%Y-%m-%dT%H", errors="coerce")
+    df["date"] = (ts + pd.Timedelta(hours=utc_offset)).dt.date
+    df["mwh"] = pd.to_numeric(df["value"], errors="coerce")
+    df = df.dropna(subset=["date", "mwh"])
+    df = df[(df["date"] >= start) & (df["date"] <= end)]
+    if df.empty:
+        return pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"])
+    # Sum the storage codes within each hour first, then clip: an hour where
+    # batteries discharge while pumped hydro pumps is one fleet, one net.
+    per_hour = df.groupby(["date", "period"], as_index=False)["mwh"].sum()
+    per_hour["mwh"] = per_hour["mwh"].clip(lower=0)
+    out = per_hour.groupby("date", as_index=False)["mwh"].sum()
+    out["fuel_category"] = "storage"
+    return out.rename(columns={"mwh": "generation_mwh"})[["date", "fuel_category", "generation_mwh"]]
+
+
 def _hourly_route(session, respondent: str, utc_offset: int, start: dt.date, end: dt.date) -> pd.DataFrame:
     # Pad one day each side so the UTC->local shift doesn't clip boundary hours.
     rows = _get_pages(
@@ -153,6 +211,14 @@ def _hourly_route(session, respondent: str, utc_offset: int, start: dt.date, end
     df = df.dropna(subset=["date", "mwh"])
     df = df[(df["date"] >= start) & (df["date"] <= end)]
     df["fuel_category"] = df["fueltype"].map(_bucket)
+    # Storage is discharge-only, so its hours are clipped before they are
+    # summed into a day - every other bucket is already non-negative.
+    is_storage = df["fuel_category"] == "storage"
+    if is_storage.any():
+        per_hour = df[is_storage].groupby(["date", "period"], as_index=False)["mwh"].sum()
+        per_hour["mwh"] = per_hour["mwh"].clip(lower=0)
+        per_hour["fuel_category"] = "storage"
+        df = pd.concat([df[~is_storage], per_hour], ignore_index=True)
     out = df.groupby(["date", "fuel_category"], as_index=False)["mwh"].sum()
     return out.rename(columns={"mwh": "generation_mwh"})
 
@@ -171,6 +237,18 @@ def fetch_daily(iso: str, start: dt.date, end: dt.date) -> pd.DataFrame:
     try:
         out = _daily_route(session, respondent, timezone, start, end)
         if not out.empty:
+            # The daily route's storage figure is net of charging; replace it
+            # with discharge rebuilt from the hourly route. If that call
+            # fails, drop storage rather than keep a number on the wrong
+            # definition - a missing bucket is honest, a mixed one is not.
+            out = out[out["fuel_category"] != "storage"]
+            try:
+                storage = _storage_daily(session, respondent, utc_offset, start, end)
+            except Exception as e:
+                print(f"EIA: storage rebuild failed for {respondent} ({e}); omitting storage")
+                storage = None
+            if storage is not None and not storage.empty:
+                out = pd.concat([out, storage], ignore_index=True)
             return out
         print(f"EIA: daily route empty for {respondent} {start}..{end}; trying hourly route")
     except Exception as e:

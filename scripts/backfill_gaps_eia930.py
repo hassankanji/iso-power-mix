@@ -12,9 +12,15 @@ pull, so it's a legitimate fallback for days the ISO's own archive has holes
 (MISO's LGI API is missing scattered days; CAISO's history CSV lacks two).
 Caveats, also documented in the README:
   - EIA-930 starts 2018-07-01; older gaps can't be filled this way.
-  - Category detail is coarser (no battery-storage split; petroleum and
-    unknown sources land in imports_other; pumped storage is inside hydro),
-    so a filled day's mix is slightly bucketed differently than neighbors.
+  - Category detail is coarser (petroleum and unknown sources land in
+    imports_other; pumped storage may be inside hydro depending on the BA's
+    reporting), so a filled day's mix is slightly bucketed differently than
+    neighbors.
+  - The bulk file's storage column is hourly net generation, so it goes
+    negative while charging. That needs no special handling here: these rows
+    go through wide_to_daily_mwh, which clips storage per hour before the
+    daily mean, giving the discharge-only figure the rest of the dataset
+    uses (see src/schema.py).
   - Values are BA-level net generation and may differ a few percent from
     the ISO's own accounting.
 
