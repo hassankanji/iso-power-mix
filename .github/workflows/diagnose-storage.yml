@@ -1,0 +1,22 @@
+name: Diagnose EIA storage convention
+
+# Manual only. api.eia.gov is unreachable from the dev sandbox, so this runs
+# scripts/diagnose_storage.py on a runner and leaves the answer in the logs.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Diagnose
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: python scripts/diagnose_storage.py
