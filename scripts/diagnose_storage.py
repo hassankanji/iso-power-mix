@@ -172,6 +172,31 @@ def main():
         flag = "" if len(by_period[p]) == full else "  <- partial hour"
         print(f"{p:<16}{len(by_period[p]):>7}{behind:>19.1f}{flag}")
 
+    print()
+    print("=" * 78)
+    print("4. EVERY US48 FUEL CODE, ITS OFFICIAL NAME, AND ITS SIZE")
+    print("=" * 78)
+    print("Codes we do not recognise fall into imports_other - if a storage-ish")
+    print("code is sitting there, that is a mis-bucketing bug, not a definition one.")
+    totals = collections.defaultdict(float)
+    names = {}
+    negatives = collections.Counter()
+    counts = collections.Counter()
+    for r in rows:
+        code = str(r.get("fueltype", "")).upper()
+        names[code] = r.get("type-name") or r.get("typeName") or "?"
+        try:
+            v = float(r["value"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        totals[code] += v
+        counts[code] += 1
+        if v < 0:
+            negatives[code] += 1
+    print(f"\n{'code':<7}{'official name':<34}{'MWh over window':>18}{'hrs':>6}{'neg hrs':>9}")
+    for code in sorted(totals, key=lambda c: -abs(totals[c])):
+        print(f"{code:<7}{str(names[code])[:33]:<34}{totals[code]:>18,.0f}{counts[code]:>6}{negatives[code]:>9}")
+
 
 if __name__ == "__main__":
     main()

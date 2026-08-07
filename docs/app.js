@@ -52,7 +52,7 @@ async function loadAllRows(meta) {
 // ---------------------------------------------------------------------------
 // Pivots. All values are converted MWh -> GWh for display.
 
-function pivotNational(rows, usRows, startDate, endDate, asPct, showUs48) {
+function pivotNational(rows, usRows, startDate, endDate, asPct) {
   const byDateCat = {};
   const totals = {};
   for (const r of rows) {
@@ -77,8 +77,10 @@ function pivotNational(rows, usRows, startDate, endDate, asPct, showUs48) {
 
   // EIA lower-48 national total as an unstacked dashed reference line, so
   // "how much of the U.S. grid do the tracked ISOs cover" is readable at a
-  // glance. Hidden in % mode (shares of the tracked total wouldn't compare).
-  if (showUs48 && !asPct) {
+  // glance. Omitted in % mode (shares of the tracked total wouldn't compare).
+  // Turning it off is the legend checkbox's job - a second control for the
+  // same series just gave two switches that disagreed.
+  if (!asPct) {
     const overlay = us48OverlayDataset(usRows, dates, startDate, endDate, rec => rec.total / 1000);
     if (overlay) datasets.push(overlay);
   }
@@ -113,7 +115,7 @@ function us48OverlayDataset(usRows, dates, startDate, endDate, valueFor) {
   };
 }
 
-function pivotByIso(rows, usRows, startDate, endDate, showUs48) {
+function pivotByIso(rows, usRows, startDate, endDate) {
   const byDateIso = {};
   const dateSet = new Set();
   const isoSet = new Set();
@@ -135,10 +137,8 @@ function pivotByIso(rows, usRows, startDate, endDate, showUs48) {
     pointRadius: 0,
     borderWidth: 1,
   }));
-  if (showUs48) {
-    const overlay = us48OverlayDataset(usRows, dates, startDate, endDate, rec => rec.total / 1000);
-    if (overlay) datasets.push(overlay);
-  }
+  const overlay = us48OverlayDataset(usRows, dates, startDate, endDate, rec => rec.total / 1000);
+  if (overlay) datasets.push(overlay);
   return { dates, datasets };
 }
 
@@ -440,8 +440,8 @@ function buildLegend(viewKey, chart) {
 
 let nationalChart, fuelChart, byIsoChart, isoChart;
 
-function renderNational(rows, usRows, start, end, asPct, showUs48, chartType) {
-  const { dates, datasets } = pivotNational(rows, usRows, start, end, asPct, showUs48);
+function renderNational(rows, usRows, start, end, asPct, chartType) {
+  const { dates, datasets } = pivotNational(rows, usRows, start, end, asPct);
   if (nationalChart) nationalChart.destroy();
   nationalChart = new Chart(document.getElementById("national-chart"),
     mixChartConfig(dates, applyChartType(datasets, chartType), "GWh / day (national)", asPct, chartType));
@@ -457,8 +457,8 @@ function renderFuel(rows, usRows, cat, start, end, asPct, smooth, chartType) {
   buildLegend("fuel", fuelChart);
 }
 
-function renderByIso(rows, usRows, start, end, showUs48, chartType) {
-  const { dates, datasets } = pivotByIso(rows, usRows, start, end, showUs48);
+function renderByIso(rows, usRows, start, end, chartType) {
+  const { dates, datasets } = pivotByIso(rows, usRows, start, end);
   if (byIsoChart) byIsoChart.destroy();
   byIsoChart = new Chart(document.getElementById("byiso-chart"),
     mixChartConfig(dates, applyChartType(datasets, chartType), "GWh / day (by ISO)", false, chartType));
@@ -915,13 +915,11 @@ async function main() {
   const nStart = document.getElementById("national-start");
   const nEnd = document.getElementById("national-end");
   const nPct = document.getElementById("national-pct");
-  const nUs48 = document.getElementById("national-us48");
   const nType = document.getElementById("national-type");
-  if (usRows.length > 0) document.getElementById("national-us48-wrap").hidden = false;
   initDateInputs(nStart, nEnd, range);
   const refreshNational = () =>
-    renderNational(rows, usRows, nStart.value, nEnd.value, nPct.checked, nUs48.checked, nType.value);
-  for (const el of [nStart, nEnd, nPct, nUs48, nType]) el.addEventListener("change", refreshNational);
+    renderNational(rows, usRows, nStart.value, nEnd.value, nPct.checked, nType.value);
+  for (const el of [nStart, nEnd, nPct, nType]) el.addEventListener("change", refreshNational);
   setupRangePresets("national-presets", nStart, nEnd, refreshNational, range, "1Y");
   refreshNational();
 
@@ -950,12 +948,10 @@ async function main() {
   // National by ISO
   const bStart = document.getElementById("byiso-start");
   const bEnd = document.getElementById("byiso-end");
-  const bUs48 = document.getElementById("byiso-us48");
   const bType = document.getElementById("byiso-type");
-  if (usRows.length > 0) document.getElementById("byiso-us48-wrap").hidden = false;
   initDateInputs(bStart, bEnd, range);
-  const refreshByIso = () => renderByIso(rows, usRows, bStart.value, bEnd.value, bUs48.checked, bType.value);
-  for (const el of [bStart, bEnd, bUs48, bType]) el.addEventListener("change", refreshByIso);
+  const refreshByIso = () => renderByIso(rows, usRows, bStart.value, bEnd.value, bType.value);
+  for (const el of [bStart, bEnd, bType]) el.addEventListener("change", refreshByIso);
   setupRangePresets("byiso-presets", bStart, bEnd, refreshByIso, range, "1Y");
   refreshByIso();
 
