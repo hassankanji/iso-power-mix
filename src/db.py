@@ -50,6 +50,44 @@ def connect() -> duckdb.DuckDBPyConnection:
     return conn
 
 
+def _enforce_storage_floor(df: pd.DataFrame, source: str) -> pd.DataFrame:
+    """Last-resort guard on the storage-is-discharge invariant (src/schema.py).
+
+    Producers clip storage on the source's native interval, which is the only
+    place the true discharge figure is recoverable. This does NOT replace
+    that - clamping a daily *net* to zero throws away a real discharge number
+    and reports it as nothing. It exists because a negative daily storage
+    total is, by definition, net-convention data that leaked past a producer,
+    and a negative slice silently breaks every stacked chart and share
+    calculation downstream.
+
+    It fires on two known populations, both bounded and both shrinking:
+      - rows written before the convention changed (39 ISO-days at the time
+        of the change: 34 ERCOT, 5 MISO), which no re-pull could re-derive
+        because ERCOT's settlement workbook had not yet covered those days
+        and MISO's own feed has permanent holes there. ERCOT's self-heal into
+        real discharge as settlement data lands inside its 45-day lookback.
+      - any future source that starts reporting net without us noticing.
+
+    So it prints loudly rather than fixing things quietly. A warning here on
+    freshly pulled data means a producer needs fixing, not that this guard is
+    doing its job.
+    """
+    negative = (df["fuel_category"] == "storage") & (df["generation_mwh"] < 0)
+    n = int(negative.sum())
+    if n:
+        worst = df.loc[negative, "generation_mwh"].min()
+        isos = sorted(df.loc[negative, "iso"].unique())
+        print(
+            f"storage floor ({source}): clamped {n} negative storage row(s) to 0 "
+            f"for {', '.join(isos)} (largest {worst:,.0f} MWh). Storage is discharge-only - "
+            f"see src/schema.py. If this fires on a fresh pull, that connector is not clipping."
+        )
+        df = df.copy()
+        df.loc[negative, "generation_mwh"] = 0.0
+    return df
+
+
 def _rebuild_from_exports(conn: duckdb.DuckDBPyConnection) -> None:
     """Repopulate an empty `generation` table from the committed per-year
     JSON exports. No-op if none exist (true first run)."""
@@ -72,6 +110,7 @@ def _rebuild_from_exports(conn: duckdb.DuckDBPyConnection) -> None:
         return
     df = pd.concat(frames, ignore_index=True)
     df["date"] = pd.to_datetime(df["date"]).dt.date
+    df = _enforce_storage_floor(df, "rebuild from committed exports")
     conn.register("_rebuild", df)
     try:
         conn.execute("INSERT INTO generation SELECT date, iso, fuel_category, generation_mwh FROM _rebuild")
@@ -96,6 +135,7 @@ def upsert_generation(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame) -> int:
         print(f"upsert_generation: dropped {dropped} row(s) with no valid generation_mwh reading")
     if df.empty:
         return 0
+    df = _enforce_storage_floor(df, "upsert")
 
     conn.register("_incoming", df)
     try:

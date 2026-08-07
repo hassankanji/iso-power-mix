@@ -85,6 +85,8 @@ Clipping happens on each source's **native interval** (5-minute, 15-minute or ho
 
 **The trade this makes, stated plainly:** counting discharge as generation means a daily total slightly double-counts energy — once when gas or solar made it, again when a battery gives it back. It is 5.5% of CAISO's 2025 total (12.5 of 225.6 TWh), 0.3% nationally, and under 0.1% everywhere else. Net accounting avoids that double-count but is unavailable from over half our sources, so it was not an option. If you are reconciling totals to the megawatt-hour, subtract the storage bucket; for reading fuel mix and gas burn, which is what this site is for, it does not matter. Switching CAISO to discharge is also why its annual total moved from ~210 to ~226 TWh.
 
+**One known blemish.** 39 ISO-days written before this change (34 ERCOT in Jul–Aug 2026, 5 MISO in Dec 2025) could not be re-derived: ERCOT's settlement workbook had not yet reached those days and MISO's own feed has permanent holes there, so no re-pull could reach the interval data. They are clamped to zero rather than left negative, which understates those days' storage slightly. The ERCOT ones repair themselves into real discharge figures as settlement data lands inside ERCOT's 45-day lookback. A database-level guard enforces the floor on every write and prints a warning when it fires, so a connector that ever regresses to net reporting shows up in the run log instead of silently reappearing as negative slices.
+
 If you want the net battery position, this dashboard is not currently the place to read it.
 
 ### Reading the national picture
