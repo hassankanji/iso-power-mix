@@ -83,6 +83,8 @@ Discharge won because it is the only definition every source can express: a net 
 
 Clipping happens on each source's **native interval** (5-minute, 15-minute or hourly), never on a daily total — flooring a day's *net* at zero would report a day of heavy cycling as no generation at all. For EIA that means the storage bucket is rebuilt from the hourly route even though every other fuel comes from the daily one.
 
+**The trade this makes, stated plainly:** counting discharge as generation means a daily total slightly double-counts energy — once when gas or solar made it, again when a battery gives it back. It is 5.5% of CAISO's 2025 total (12.5 of 225.6 TWh), 0.3% nationally, and under 0.1% everywhere else. Net accounting avoids that double-count but is unavailable from over half our sources, so it was not an option. If you are reconciling totals to the megawatt-hour, subtract the storage bucket; for reading fuel mix and gas burn, which is what this site is for, it does not matter. Switching CAISO to discharge is also why its annual total moved from ~210 to ~226 TWh.
+
 If you want the net battery position, this dashboard is not currently the place to read it.
 
 ### Reading the national picture

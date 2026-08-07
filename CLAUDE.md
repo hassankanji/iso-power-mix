@@ -114,8 +114,10 @@ no full fuel-mix product and needs a B2C bearer token besides the key.
 - Dashboard: `cd docs && python -m http.server 8420`, drive with Playwright
   (chromium at /opt/pw-browsers/chromium), screenshot every tab.
 - Numbers: trigger reconcile.yml (ratios vs EIA should be ~0.95-1.05) and
-  sanity-check magnitudes: MISO ~650, PJM ~840, ERCOT ~490, SPP ~300,
-  CAISO ~210, NYISO ~130, ISONE ~105 TWh/yr.
+  sanity-check magnitudes (2025 actuals): MISO ~660, PJM ~875, ERCOT ~485,
+  SPP ~300, CAISO ~225, NYISO ~133, ISONE ~108 TWh/yr. CAISO moved up from
+  ~210 when storage became discharge-only — its battery discharge is 5.5%
+  of its total, and it used to be subtracted as net.
 - Workflow dispatches accept a branch ref and commit results back to that
   branch — use this to run backfills before merging.
 - To ask api.eia.gov a question (sign conventions, fuel codes, freshness),
