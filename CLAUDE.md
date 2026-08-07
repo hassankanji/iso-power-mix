@@ -16,13 +16,18 @@ src/db.py             DuckDB storage. THE .duckdb FILE IS NOT COMMITTED - it is 
                       from docs/data/iso_daily_<year>.json on every fresh checkout
 src/export.py         DB -> docs/data/*.json (per-year files, snapshot, meta) + interpolation
 docs/                 static dashboard (vanilla JS + vendored Chart.js, no build step)
-                      The Live tab is the one part that talks to the network at
+                      The Hourly tab is the one part that talks to the network at
                       runtime: it calls api.eia.gov (US48 hourly, CORS is open)
-                      from the browser on demand, with the READER's own key from
-                      localStorage - never a committed key, never the pipeline.
+                      from the browser on demand. Its key comes from
+                      docs/data/live_key.json, which daily.yml writes from the
+                      EIA_API_KEY secret - deliberately public (Pages is static,
+                      there is nowhere to hide it), rotated by re-running the
+                      workflow. A reader's own localStorage key overrides it.
 .github/workflows/    daily.yml (12:00 + 16:30 UTC crons - set ~90 min early because
-                      GitHub delays cron starts; dispatch w/ iso|start|end inputs),
-                      backfill-gaps.yml (keyless EIA bulk), reconcile.yml (EIA audit)
+                      GitHub delays cron starts; dispatch w/ iso|start|end|us48_start),
+                      backfill-gaps.yml (keyless EIA bulk), reconcile.yml (EIA audit,
+                      plus mode=diagnose-storage - the way to ask api.eia.gov
+                      anything, since the sandbox cannot reach it)
 ```
 
 The committed per-year JSON exports are the durable dataset (grain:
@@ -59,9 +64,24 @@ changes daily — this keeps the repo small forever. Never commit
    answer 503 after ~35s (measured 2026-08-06, via a runner - the sandbox
    can't reach eia.gov). Both `src/eia.py` and the dashboard's Live tab
    always pass an explicit window.
-7. **Missing credentials are "skipped", never "failed".** Real failures and
-   staleness >8 days exit non-zero so the Actions run goes red and emails
-   the owner. Don't break this contract — it's the monitoring.
+7. **Missing credentials are "skipped", never "failed"; unreachable hosts
+   are "failed_unreachable", also never fatal on their own.** Real failures
+   (anything where the host answered and we couldn't use it) and staleness
+   >8 days exit non-zero so the Actions run goes red and emails the owner.
+   A connect/read timeout is not a defect and the next run's lookback
+   re-fetches the same days — one six-minute SPP outage reddening two runs
+   is what motivated the split. Don't break this contract — it's the
+   monitoring, and its value is entirely in not crying wolf.
+
+8. **Storage is discharge only, clipped at the source's native interval.**
+   Sources disagree: ERCOT/MISO/CAISO feeds and EIA's ERCO/MISO are net of
+   charging, PJM and EIA's SWPP/ISNE are discharge-only, SPP/NYISO/ISONE
+   and EIA's CISO/PJM/NYIS have no storage series at all. Blending those is
+   what made EIA's US48 storage +8.4 TWh in 2025 against CAISO's -1.9 TWh.
+   Never clip a daily total — that reports heavy cycling as zero. EIA's
+   storage bucket therefore comes from the hourly route while every other
+   fuel comes from the daily one (`_storage_daily` in src/eia.py). Full
+   reasoning in src/schema.py's docstring and the README.
 
 ## Connector contract
 
@@ -98,6 +118,11 @@ no full fuel-mix product and needs a B2C bearer token besides the key.
   CAISO ~210, NYISO ~130, ISONE ~105 TWh/yr.
 - Workflow dispatches accept a branch ref and commit results back to that
   branch — use this to run backfills before merging.
+- To ask api.eia.gov a question (sign conventions, fuel codes, freshness),
+  write it into `scripts/diagnose_storage.py` and dispatch reconcile.yml
+  with `mode=diagnose-storage`. A NEW workflow file cannot be dispatched
+  until it is on the default branch, which is why this rides an existing
+  one — don't waste a cycle rediscovering that.
 
 ## Conventions
 

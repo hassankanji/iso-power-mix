@@ -5,6 +5,7 @@ Daily electricity generation by fuel type for all 7 U.S. ISOs/RTOs, built for qu
 **Dashboard:** https://hassankanji.github.io/iso-power-mix/
 **Coverage:** CAISO, PJM, ERCOT, MISO, SPP, NYISO, ISO-NE, plus EIA's US-lower-48 total as a national reference
 **Fuel buckets:** natural gas, coal, nuclear, hydro, wind, solar, other renewables, storage, imports/other
+**Storage means discharge**, never net of charging — see [What "storage" means](#what-storage-means)
 
 ---
 
@@ -50,17 +51,39 @@ So ERCOT is always complete to yesterday; recent weeks firm up from preliminary/
 3. **National by ISO** — each ISO's total contribution, with the same US48 overlay.
 4. **Per-ISO Breakdown** — full fuel mix for one ISO.
 5. **Latest Snapshot** — every ISO's most recent day, in **GWh/TWh with the share alongside** and a daily total per market, plus the freshness table and gap status.
-6. **Live (EIA-930)** — national generation *right now*, not yesterday. See below.
+6. **Hourly (EIA-930)** — national generation hour by hour rather than day by day. See below.
 
 Every chart has a **Stacked / Lines** switch: stacked answers "what was the total and who contributed", lines answer "where is this one series going" without the series below it moving the baseline. Also checkbox legends (untick to exclude a series), Bloomberg-style range presets (1D→Max, default 1Y), and free date pickers. Stacked windows under ~2 weeks render as bars.
 
-### The Live tab
+### The Hourly tab
 
-Everything else here is settled daily data, gated by the slowest ISO's publication schedule — at best yesterday. The Live tab skips the pipeline entirely and reads **EIA-930's hourly lower-48 aggregate** (respondent `US48`) straight from the EIA API in your browser: total generation and the split by fuel for the most recently published hour, each fuel's change against the same hour yesterday, and the last 48 hours as a chart. EIA typically posts an hour 1–3 hours after it ends, which is the closest to real-time any free public national source gets. Values are average MW over the hour, shown as GW (the rest of the site is energy per day, in GWh).
+Everything else here is settled *daily* data. This tab reads **EIA-930's hourly lower-48 aggregate** (respondent `US48`) straight from the EIA API in your browser: total generation and the split by fuel for the most recently published hour, each fuel's change against the same hour yesterday, and the last 48 hours as a chart. Values are average MW over the hour, shown as GW (the rest of the site is energy per day, in GWh).
+
+**It is not real time**, and it used to claim otherwise. Measured from a runner on 2026-08-07, the newest published hour was **14.7 hours old**, and every hour in the window carried all 16 fuel codes — so that is EIA's publication schedule for the by-fuel breakdown, not a half-written hour being dropped client-side. (EIA's demand and interchange series are far fresher; the fuel split is not.) Budget 12–18 hours. The tab prints the actual lag next to the headline number so you never have to assume.
 
 It fetches **only when you open the tab or press Refresh** — no polling, no Actions minutes, no commits. The last pull is cached in the browser so the tab is never blank.
 
-**One-time setup:** the tab asks for a free [EIA API key](https://www.eia.gov/opendata/register.php) (instant, email only), stored in your browser's local storage. It is deliberately *not* baked into the site: this repo is public, and a key committed here would be a published secret. Each reader of the dashboard adds their own; "Forget the stored EIA key" clears it. Note this is separate from the repo's `EIA_API_KEY` Actions secret, which the daily pipeline uses server-side.
+**No setup:** the site ships its own EIA key, written into `docs/data/live_key.json` from the `EIA_API_KEY` Actions secret by the daily workflow, so readers need no key of their own. That key is public by construction — GitHub Pages is static and has no server to hide one behind — which is an accepted trade: an EIA key is free, grants nothing beyond read access to public EIA data, and rotating it means updating the secret and re-running the workflow. If it is ever rejected or rate-limited, the tab offers a box for your own free [EIA key](https://www.eia.gov/opendata/register.php), kept in your browser's local storage and preferred over the site's until you clear it.
+
+### What "storage" means
+
+**Storage here is energy sent *out* of batteries and pumped hydro. Charging is excluded** — it is load, not generation. So the storage line is always ≥ 0, and it is *not* the net battery position.
+
+This is a deliberate choice, forced by the sources disagreeing with each other. Measured against EIA-930 on 2026-08-07:
+
+| Convention | Sources |
+|---|---|
+| Net of charging (goes negative) | ERCOT, MISO and CAISO's own feeds; EIA's `ERCO` and `MISO` respondents |
+| Discharge only (never negative) | PJM and MISO's own feeds; EIA's `SWPP` and `ISNE` respondents |
+| No storage series at all | SPP, NYISO and ISO-NE's own feeds; EIA's `CISO`, `PJM` and `NYIS` respondents |
+
+EIA's `US48` aggregate sums balancing authorities from the first two groups, which is why its storage used to read **+8.4 TWh across 2025** while CAISO — which reports net — sat at **−1.9 TWh**. Neither figure was wrong; they answered different questions and were stacked in one chart.
+
+Discharge won because it is the only definition every source can express: a net series can always drop its charging intervals, but a discharge-only series can never be reconstructed into a net one. It is also the only one that makes a stacked generation mix add up, since every other bucket is gross generation too.
+
+Clipping happens on each source's **native interval** (5-minute, 15-minute or hourly), never on a daily total — flooring a day's *net* at zero would report a day of heavy cycling as no generation at all. For EIA that means the storage bucket is rebuilt from the hourly route even though every other fuel comes from the daily one.
+
+If you want the net battery position, this dashboard is not currently the place to read it.
 
 ### Reading the national picture
 
