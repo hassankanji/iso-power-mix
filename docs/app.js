@@ -999,7 +999,11 @@ async function main() {
   const fPct = document.getElementById("fuel-pct");
   const fType = document.getElementById("fuel-type");
   initDateInputs(fStart, fEnd, range);
+  const storageNote = document.getElementById("fuel-storage-note");
   const refreshFuel = () => {
+    // Storage is the one bucket whose definition needs saying out loud - a
+    // line that never dips below zero looks like missing data otherwise.
+    storageNote.hidden = fuelSelect.value !== "storage";
     // Shares of each ISO's own total can't be stacked - seven such shares
     // sum to whatever they like, not to 100.
     const stacked = fType.value === "stacked";

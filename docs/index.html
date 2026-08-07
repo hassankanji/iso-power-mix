@@ -61,6 +61,15 @@
       <label class="check"><input type="checkbox" id="fuel-pct"> % of each ISO's total</label>
     </div>
     <p class="view-note">One line per ISO for the selected fuel, plus the US lower-48 total (EIA) for national context. Use "% of each ISO's total" to compare mix share across markets of very different size.</p>
+    <p class="view-note" id="fuel-storage-note" hidden>
+      <strong>Storage here is discharge only</strong> - energy sent out of
+      batteries and pumped hydro, with charging excluded because it is load,
+      not generation. It is not the net battery position, and it never goes
+      below zero. The sources disagree on this (some report net, some report
+      discharge, some report nothing), and mixing them is what previously put
+      EIA's national line far above ISOs sitting below zero. Only ISOs that
+      publish a storage series appear.
+    </p>
     <div class="chart-legend" id="fuel-legend"></div>
     <div class="chart-wrap"><canvas id="fuel-chart"></canvas></div>
   </section>
