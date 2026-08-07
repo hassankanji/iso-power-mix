@@ -21,7 +21,7 @@
   <button class="tab-btn" data-view="byiso">National by ISO</button>
   <button class="tab-btn" data-view="iso">Per-ISO Breakdown</button>
   <button class="tab-btn" data-view="snapshot">Latest Snapshot</button>
-  <button class="tab-btn" data-view="live">Live (EIA-930)</button>
+  <button class="tab-btn" data-view="live">Hourly (EIA-930)</button>
 </nav>
 
 <main>
@@ -127,23 +127,26 @@
       </label>
     </div>
     <p class="view-note">
-      National generation right now, read straight from EIA-930's hourly lower-48
-      aggregate - it bypasses the individual ISO publication delays that hold the
-      other tabs a day back. EIA typically posts an hour 1-3 hours after it ends.
-      Values are average MW over the hour, shown as GW. Nothing is fetched until
-      you open this tab or press Refresh.
+      Hourly national generation from EIA-930's lower-48 aggregate - the hourly
+      shape the other tabs cannot show, since they carry whole settled days.
+      This is <strong>not real time</strong>: EIA publishes the fuel-type
+      breakdown roughly 12-18 hours after the hour ends, so the newest bar here
+      is normally late yesterday evening. The exact lag is printed next to the
+      headline number. Values are average MW over the hour, shown as GW.
+      Nothing is fetched until you open this tab or press Refresh.
     </p>
 
     <div id="live-setup" class="live-setup" hidden>
       <p>
-        This tab calls the EIA API from your browser, so it needs your own free
-        EIA API key - <a href="https://www.eia.gov/opendata/register.php" target="_blank" rel="noopener">register here</a>
-        (instant, email only). The key is stored in this browser's local storage
-        and never leaves it except in requests to api.eia.gov; it is not part of
-        this site's code.
+        This tab calls the EIA API straight from your browser using this site's
+        own EIA key. If that key is ever rejected or rate-limited, you can put
+        your own free key in here instead -
+        <a href="https://www.eia.gov/opendata/register.php" target="_blank" rel="noopener">register here</a>
+        (instant, email only). It is stored in this browser's local storage and
+        never leaves it except in requests to api.eia.gov.
       </p>
       <div class="live-key-row">
-        <input type="text" id="live-key" placeholder="Paste EIA API key" autocomplete="off" spellcheck="false">
+        <input type="text" id="live-key" placeholder="Paste your own EIA API key" autocomplete="off" spellcheck="false">
         <button id="live-key-save" class="refresh-btn">Save key</button>
       </div>
     </div>
@@ -168,7 +171,7 @@
     </div>
 
     <p class="view-note">
-      <button id="live-key-clear" class="link-btn" hidden>Forget the stored EIA key</button>
+      <button id="live-key-clear" class="link-btn" hidden>Forget my own EIA key and go back to the site's</button>
     </p>
   </section>
 </main>

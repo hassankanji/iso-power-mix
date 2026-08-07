@@ -575,22 +575,33 @@ function renderStatusChips(isoStats, meta) {
 }
 
 // ---------------------------------------------------------------------------
-// Live tab
+// Hourly (EIA-930) tab
 //
-// Everything else on this dashboard is settled daily data, which is at best
-// yesterday: each ISO publishes on its own delay and the pipeline runs once a
-// day. This tab skips all of that and reads EIA-930's hourly fuel-type series
-// for respondent US48 - EIA's own lower-48 aggregate, one number per fuel per
-// hour, typically 1-3 hours behind the clock. That is as close to "right now,
-// nationwide" as any free public source gets.
+// Everything else on this dashboard is settled *daily* data. This tab reads
+// EIA-930's hourly fuel-type series for respondent US48 - EIA's own lower-48
+// aggregate, one number per fuel per hour - which is what the other tabs
+// cannot show: the intraday shape.
+//
+// It is NOT real time, and this tab no longer claims to be. Measured on a
+// runner 2026-08-07: the newest published hour was 14.7 hours old, and every
+// hour in the window carried all 16 fuel codes, so the lag is EIA's
+// publication schedule for the fuel-type breakdown, not a partial-hour
+// artifact. (EIA's demand/interchange series is far fresher; the by-fuel
+// split is not.) Budget 12-18 hours and show the reader the real number.
 //
 // It is fetched from the browser on demand (the Refresh button) rather than
 // polled or baked into the daily export: no extra Actions minutes, no commits,
 // and nothing fetched at all unless a reader opens this tab.
 //
-// The API key is the *reader's* own free EIA key, kept in localStorage. It is
-// never committed - a key in the repo would be a published secret (see
-// CLAUDE.md), and GitHub Pages has no server to hide one behind.
+// Key handling: the site ships its own EIA key in data/live_key.json, written
+// from the EIA_API_KEY Actions secret at publish time (never typed into the
+// source - see .github/workflows/daily.yml), so a reader needs no key of
+// their own. It is a published key by construction: GitHub Pages is static
+// and has no server to hide one behind. That is an accepted trade - an EIA
+// key is free, grants nothing but read access to public EIA data, and is
+// rotated by re-running the workflow. A reader can still override it with
+// their own key (localStorage), which is what the setup box offers when the
+// shared key is rejected or rate-limited.
 
 const EIA_LIVE_URL = "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/";
 const LIVE_HOURS = 48;
@@ -600,15 +611,35 @@ const LIVE_CACHE_MAX_AGE_MS = 30 * 60 * 1000; // auto-fetch on open only if stal
 
 // Same mapping as src/eia.py's _FUELTYPE_TO_CANONICAL - keep the two in sync.
 // Anything unrecognized buckets to imports_other rather than being dropped.
+// OES/UES/WNB were missing here and in eia.py until the US48 code dump on
+// 2026-08-07; UES is "Unknown energy storage" and was being read as "other".
 const EIA_FUEL_TO_CANONICAL = {
   COL: "coal", NG: "natural_gas", NUC: "nuclear", WAT: "hydro", SUN: "solar",
-  SNB: "solar", WND: "wind", BAT: "storage", PS: "storage",
+  SNB: "solar", WND: "wind", WNB: "wind",
+  BAT: "storage", PS: "storage", OES: "storage", UES: "storage",
   GEO: "other_renewables", BIO: "other_renewables",
   OIL: "imports_other", OTH: "imports_other", UNK: "imports_other",
 };
 
-function liveKey() {
+// The site's own key, loaded once from data/live_key.json. Empty string means
+// "loaded, and there isn't one" (a fork with no EIA_API_KEY secret); null
+// means "not loaded yet".
+let sharedLiveKey = null;
+
+async function loadSharedLiveKey() {
+  const payload = await loadJSON("live_key.json", true);
+  sharedLiveKey = (payload && payload.eia_api_key) || "";
+  return sharedLiveKey;
+}
+
+function ownLiveKey() {
   try { return localStorage.getItem(LIVE_KEY_STORE) || ""; } catch { return ""; }
+}
+
+// A reader's own key wins over the shared one - that is the whole point of
+// the override when the shared key is rate-limited.
+function liveKey() {
+  return ownLiveKey() || sharedLiveKey || "";
 }
 
 function readLiveCache() {
@@ -663,8 +694,14 @@ async function fetchLiveHours(apiKey) {
   } catch (e) {
     throw new Error(`Could not reach api.eia.gov (${e.message}). Check the connection, or whether a browser extension is blocking the request.`);
   }
-  if (res.status === 403 || res.status === 401) {
-    throw new Error("EIA rejected the API key (403). Check the key, or register a new free one at eia.gov/opendata/register.php.");
+  if (res.status === 403 || res.status === 401 || res.status === 429) {
+    const e = new Error(
+      res.status === 429
+        ? "EIA is rate-limiting this site's API key. Paste your own free key below to keep going."
+        : "EIA rejected this site's API key. Paste your own free key below to keep going."
+    );
+    e.keyProblem = true; // surfaces the bring-your-own-key box
+    throw e;
   }
   if (res.status === 503 || res.status === 504) {
     throw new Error("EIA's API is not responding right now (503). This happens periodically - press Refresh again in a minute.");
@@ -699,6 +736,12 @@ function rollLiveHours(rows) {
   const hours = [...byPeriod.values()].sort((a, b) => (a.period < b.period ? 1 : -1));
   const fullCount = Math.max(...hours.map(h => h.codes.size));
   while (hours.length > 1 && hours[0].codes.size < fullCount) hours.shift();
+  // Storage is discharge-only everywhere in this project (see src/schema.py):
+  // an hour of net charging is an hour of zero storage generation, not a
+  // negative slice in a stacked mix.
+  for (const h of hours) {
+    if (h.mix.storage < 0) h.mix.storage = 0;
+  }
   // The request asks for more than LIVE_HOURS so the window is still full
   // after the unpublished tail is dropped; the surplus is trimmed here.
   return hours.slice(0, LIVE_HOURS)
@@ -772,11 +815,22 @@ function renderLiveChart(hours, chartType) {
   buildLegend("live", liveChart);
 }
 
+// "14 hours behind" is the number that stops a reader treating this as live,
+// so it sits next to the headline rather than in the fine print.
+function fmtLag(period) {
+  const stamp = periodToDate(period);
+  if (!stamp) return "";
+  const hours = (Date.now() - stamp.getTime()) / 3600000;
+  if (hours < 1.5) return " - about an hour behind";
+  if (hours < 48) return ` - ${Math.round(hours)} hours behind`;
+  return ` - ${Math.round(hours / 24)} days behind`;
+}
+
 function renderLive(hours, fetchedAt, chartType) {
   const now = hours[0];
   document.getElementById("live-total").textContent = fmtPower(now.total);
   document.getElementById("live-asof").textContent =
-    `hour ending ${formatLivePeriod(now.period)} - retrieved ${new Date(fetchedAt).toLocaleTimeString()}`;
+    `hour ending ${formatLivePeriod(now.period)}${fmtLag(now.period)}`;
   renderLiveBars(hours);
   renderLiveChart(hours, chartType);
   document.getElementById("live-panels").hidden = false;
@@ -801,15 +855,24 @@ function setupLiveTab() {
     errorEl.hidden = !msg;
   };
 
-  const syncKeyUi = () => {
+  // The setup box is a fallback now, not a gate: it appears only when there
+  // is no usable key at all, or when the shared one has just been refused.
+  const syncKeyUi = (keyProblem = false) => {
     const key = liveKey();
-    setupEl.hidden = !!key;
-    forgetBtn.hidden = !key;
+    setupEl.hidden = !!key && !keyProblem;
+    forgetBtn.hidden = !ownLiveKey();
     refreshBtn.disabled = !key;
-    if (!key) statusEl.textContent = "Add a free EIA API key to enable this tab";
+    if (!key && sharedLiveKey !== null) {
+      statusEl.textContent = "No EIA API key available - add one below to enable this tab";
+    }
   };
 
+  // Resolves once data/live_key.json has been consulted. Everything that
+  // needs a key waits on it, so the tab never decides "no key" prematurely.
+  const keyReady = loadSharedLiveKey().catch(() => { sharedLiveKey = ""; }).then(() => syncKeyUi());
+
   const refresh = async () => {
+    await keyReady;
     const key = liveKey();
     if (!key || inFlight) return;
     inFlight = true;
@@ -825,6 +888,7 @@ function setupLiveTab() {
       statusEl.textContent = `Updated ${new Date(fetchedAt).toLocaleTimeString()}`;
     } catch (e) {
       showError(e.message);
+      if (e.keyProblem) syncKeyUi(true);
       statusEl.textContent = hours ? "Showing the last successful pull" : "No data loaded";
     } finally {
       inFlight = false;
@@ -842,12 +906,13 @@ function setupLiveTab() {
   });
   keyInput.addEventListener("keydown", (e) => { if (e.key === "Enter") saveBtn.click(); });
 
+  // Dropping a personal key falls back to the site's own rather than
+  // emptying the tab, so this is now an undo, not a teardown.
   forgetBtn.addEventListener("click", () => {
-    try { localStorage.removeItem(LIVE_KEY_STORE); localStorage.removeItem(LIVE_CACHE_STORE); } catch { /* ignore */ }
-    hours = null;
-    document.getElementById("live-panels").hidden = true;
+    try { localStorage.removeItem(LIVE_KEY_STORE); } catch { /* ignore */ }
     showError("");
     syncKeyUi();
+    if (liveKey()) refresh();
   });
 
   refreshBtn.addEventListener("click", refresh);
@@ -865,7 +930,8 @@ function setupLiveTab() {
   syncKeyUi();
 
   let autoFetched = false;
-  return () => { // called when the tab is opened
+  return async () => { // called when the tab is opened
+    await keyReady;
     if (autoFetched || !liveKey()) return;
     autoFetched = true;
     if (!fetchedAt || Date.now() - fetchedAt > LIVE_CACHE_MAX_AGE_MS) refresh();

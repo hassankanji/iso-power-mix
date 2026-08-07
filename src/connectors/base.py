@@ -53,6 +53,22 @@ def chunk_date_range(
 
 HOURS_PER_DAY = 24
 
+# Buckets whose readings are clipped at zero before the daily average, so the
+# stored number is generation OUT of the asset and never net of charging.
+# See src/schema.py for why discharge-only is the canonical definition.
+#
+# Clipping MUST happen here, on the native interval readings, not on a daily
+# total: a day's net storage is (discharge - charging), and flooring THAT at
+# zero would report a day of heavy cycling as zero generation. Clipping each
+# interval and then averaging gives exactly the discharge energy, because
+# mean(MW) * 24h over N evenly spaced readings is just the interval sum
+# rescaled.
+DISCHARGE_ONLY_CATEGORIES = {"storage"}
+
+
+def _clip_discharge_only(mw: pd.Series, canon: str) -> pd.Series:
+    return mw.clip(lower=0) if canon in DISCHARGE_ONLY_CATEGORIES else mw
+
 
 def wide_to_daily_mwh(
     df: pd.DataFrame,
@@ -72,6 +88,11 @@ def wide_to_daily_mwh(
     mean instead would silently divide the combined total by the number of
     native columns - a bug that halved SPP's history until caught by
     reconciling against EIA totals.
+
+    DISCHARGE_ONLY_CATEGORIES (storage) are clipped at zero per row, AFTER
+    the natives sharing the bucket are summed: it is the fleet's net output
+    in that interval that decides whether the fleet was discharging, not any
+    one column's sign.
     """
     per_canon: dict[str, pd.Series] = {}
     for native_col, canon in category_map.items():
@@ -81,6 +102,7 @@ def wide_to_daily_mwh(
         per_canon[canon] = mw if canon not in per_canon else per_canon[canon].add(mw, fill_value=0)
     if not per_canon:
         return pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"])
+    per_canon = {canon: _clip_discharge_only(mw, canon) for canon, mw in per_canon.items()}
     parts = [
         pd.DataFrame({"date": date_series, "fuel_category": canon, "mw": mw})
         for canon, mw in per_canon.items()
@@ -112,6 +134,13 @@ def long_to_daily_mwh(
 
     `category_map` is a dict (unmapped natives are dropped) or a callable
     (applied to every native; use for .get(..., fallback) semantics).
+
+    DISCHARGE_ONLY_CATEGORIES (storage) are clipped at zero on the raw
+    readings, before any averaging. Unlike the wide path this clips each
+    native separately, because a long table gives no timestamp to sum two
+    storage natives across first - correct as long as one native carries the
+    bucket, which is the case for every long-format source we read (MISO's
+    "storage", PJM's "storage").
     """
     tmp = pd.DataFrame(
         {
@@ -120,6 +149,10 @@ def long_to_daily_mwh(
             "mw": pd.to_numeric(df[mw_col], errors="coerce"),
         }
     )
+    bucket = category_map if callable(category_map) else category_map.get
+    discharge_only = tmp["native"].map(lambda n: bucket(n) in DISCHARGE_ONLY_CATEGORIES)
+    tmp.loc[discharge_only, "mw"] = tmp.loc[discharge_only, "mw"].clip(lower=0)
+
     per_native = tmp.groupby(["date", "native"], as_index=False)["mw"].mean()
     if callable(category_map):
         per_native["fuel_category"] = per_native["native"].map(category_map)
