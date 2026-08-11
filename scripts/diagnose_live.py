@@ -14,6 +14,34 @@ scheduled server-side fetch that commits the result.
 Prints, for each candidate:
   freshness  - how far behind the wall clock its newest reading is
   CORS       - whether a browser on hassankanji.github.io may read it directly
+
+MEASURED 2026-08-11 12:16 UTC (run 31490371750) - the answer to "can we get
+live data", kept here so nobody re-derives it:
+
+  source                        freshness      CORS
+  EIA fuel-type-data US48       9.3 h behind   YES (*)
+  EIA region-data US48 (NG)     9.3 h behind   YES (*)
+  CAISO current fuelsource.csv  6 MIN behind   no
+  ERCOT dashboard fuel-mix      5 MIN behind   no (ACAO: https://mis.ercot.com)
+  MISO public FuelMix           near real-time YES (*)
+  NYISO rtfuelmix               16 MIN behind  no
+  SPP GenMix365                 daily file     no
+
+Two conclusions:
+
+1. EIA is not the way to get live data, and there is no fresher EIA route to
+   switch to - region-data (total net generation, no fuel split) lags exactly
+   as much as the by-fuel series, so even a live national TOTAL is out. EIA
+   is a settlement-grade aggregator, not a real-time feed.
+
+2. The ISOs themselves ARE live - 5 to 16 minutes - and they are where the
+   gas burn a trader cares about actually happens. But only MISO sends a
+   permissive CORS header, so a static GitHub Pages site cannot read the
+   others from the browser. Using them needs a scheduled job that fetches
+   server-side and commits the result, which caps freshness at the cron
+   cadence. Note GitHub's scheduler routinely runs crons 30-90 minutes late
+   (see CLAUDE.md), so an Actions-based collector realistically delivers
+   15-60 minute data, not 5-minute data.
 """
 import datetime as dt
 import io

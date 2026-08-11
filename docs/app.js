@@ -482,9 +482,33 @@ function fmtEnergy(mwh) {
   return `${gwh.toLocaleString(undefined, { maximumFractionDigits: 1 })} GWh`;
 }
 
+// Day-over-day change cell. `prev` undefined means the comparison day has no
+// data at all for this area - render an empty cell rather than a fabricated
+// swing against zero. A fuel missing from a day that DID report is a genuine
+// zero, and the callers pass 0 for it.
+function deltaCell(now, prev, prevLabel) {
+  if (prev === undefined || prev === null || !Number.isFinite(prev)) {
+    return `<span class="value delta"></span>`;
+  }
+  const d = now - prev;
+  const pct = prev !== 0 ? ` (${d >= 0 ? "+" : ""}${((d / Math.abs(prev)) * 100).toFixed(1)}%)` : "";
+  // Anything under 50 MWh rounds to zero at this display precision, and
+  // "-0 GWh" reads as a rendering bug rather than as "flat".
+  if (Math.abs(d) < 50) {
+    return `<span class="value delta" title="vs ${prevLabel}${pct}">0 GWh</span>`;
+  }
+  const cls = d > 0 ? "up" : "down";
+  const sign = d > 0 ? "+" : "-";
+  return `<span class="value delta ${cls}" title="vs ${prevLabel}${pct}">${sign}${fmtEnergy(Math.abs(d))}</span>`;
+}
+
 // Bars are sized by share of the day's total; the number that matters to a
 // gas trader is the volume, so that leads and the share follows it.
-function renderBarRows(container, mix, totalOverride) {
+//
+// `prev` is an optional {fuel_category -> MWh} map for the day before, which
+// adds a change column. It is derived client-side from the same per-year rows
+// the charts use, so it can never disagree with them.
+function renderBarRows(container, mix, totalOverride, prev, prevLabel) {
   container.innerHTML = "";
   const total = totalOverride ?? mix.reduce((s, m) => s + m.generation_mwh, 0);
   const sorted = [...mix].sort((a, b) => b.generation_mwh - a.generation_mwh);
@@ -497,25 +521,43 @@ function renderBarRows(container, mix, totalOverride) {
       <span class="bar-track"><span class="bar-fill" style="width:${Math.max(pct, 0)}%;background:${colorFor(m.fuel_category)}"></span></span>
       <span class="value">${fmtEnergy(m.generation_mwh)}</span>
       <span class="value pct">${pct.toFixed(1)}%</span>
+      ${prev ? deltaCell(m.generation_mwh, prev[m.fuel_category] ?? 0, prevLabel) : ""}
     `;
     container.appendChild(row);
   }
   const totalRow = document.createElement("div");
   totalRow.className = "bar-row total-row";
+  const prevTotal = prev ? Object.values(prev).reduce((s, v) => s + v, 0) : undefined;
   totalRow.innerHTML = `
     <span class="label">Total</span>
     <span class="bar-track"></span>
     <span class="value">${fmtEnergy(total)}</span>
     <span class="value pct">100%</span>
+    ${prev ? deltaCell(total, prevTotal, prevLabel) : ""}
   `;
   container.appendChild(totalRow);
 }
 
-function renderSnapshotNationalBars(mix) {
-  renderBarRows(document.getElementById("snapshot-national-bars"), mix);
+// Collects {iso|date -> {cat -> mwh}} for just the (iso, date) pairs asked
+// for, in one pass over the row array. Building a full index instead would
+// allocate an object per ISO-day across twenty years to answer seven
+// questions.
+function mixesFor(rows, wanted) {
+  const out = {};
+  for (const r of rows) {
+    const key = `${r.iso}|${r.date}`;
+    if (!wanted.has(key)) continue;
+    const rec = out[key] || (out[key] = {});
+    rec[r.cat] = (rec[r.cat] || 0) + r.mwh;
+  }
+  return out;
 }
 
-function renderSnapshotGrid(byIso) {
+function renderSnapshotNationalBars(mix, prev, prevLabel) {
+  renderBarRows(document.getElementById("snapshot-national-bars"), mix, undefined, prev, prevLabel);
+}
+
+function renderSnapshotGrid(byIso, prevMixes) {
   const grid = document.getElementById("snapshot-grid");
   grid.innerHTML = "";
   for (const iso of Object.keys(byIso).sort()) {
@@ -527,7 +569,8 @@ function renderSnapshotGrid(byIso) {
     const barsContainer = document.createElement("div");
     card.appendChild(barsContainer);
     grid.appendChild(card);
-    renderBarRows(barsContainer, mix);
+    const prevDate = addDays(as_of, -1);
+    renderBarRows(barsContainer, mix, undefined, prevMixes[`${iso}|${prevDate}`], prevDate);
   }
 }
 
@@ -754,31 +797,24 @@ function fmtPower(mw) {
   return `${gw.toLocaleString(undefined, { maximumFractionDigits: 2 })} GW`;
 }
 
-// Per-fuel bars for the newest hour. The right-hand column is the change
-// against the same hour yesterday - the comparison that strips out the daily
-// load and solar shape, so what's left is weather, outages and switching.
+// Per-fuel bars for the newest published hour.
+//
+// There is deliberately no "vs the same hour yesterday" column here. It read
+// as a market signal but wasn't one: the newest hour EIA publishes is ~15
+// hours old, so it is almost always a late-evening hour, and comparing one
+// late-evening hour to the previous one just reported solar as collapsed
+// every single time. A day-over-day comparison belongs on whole days, where
+// the daily tabs make it - see the Latest Snapshot tab.
 function renderLiveBars(hours) {
   const container = document.getElementById("live-bars");
   container.innerHTML = "";
   const now = hours[0];
-  const yesterday = hours.find(h => {
-    const a = periodToDate(now.period), b = periodToDate(h.period);
-    return a && b && Math.round((a - b) / 3600000) === 24;
-  });
   const sorted = CATEGORIES
     .map(cat => ({ cat, mw: now.mix[cat] || 0 }))
     .filter(d => d.mw !== 0)
     .sort((a, b) => b.mw - a.mw);
   for (const { cat, mw } of sorted) {
     const pct = now.total > 0 ? (mw / now.total) * 100 : 0;
-    let delta = "";
-    if (yesterday && cat in yesterday.mix) {
-      const d = mw - yesterday.mix[cat];
-      const cls = d >= 0 ? "up" : "down";
-      delta = `<span class="value delta ${cls}" title="vs the same hour yesterday">${d >= 0 ? "+" : "-"}${fmtPower(Math.abs(d))}</span>`;
-    } else {
-      delta = `<span class="value delta"></span>`;
-    }
     const row = document.createElement("div");
     row.className = "bar-row";
     row.innerHTML = `
@@ -786,7 +822,6 @@ function renderLiveBars(hours) {
       <span class="bar-track"><span class="bar-fill" style="width:${Math.max(pct, 0)}%;background:${colorFor(cat)}"></span></span>
       <span class="value">${fmtPower(mw)}</span>
       <span class="value pct">${pct.toFixed(1)}%</span>
-      ${delta}
     `;
     container.appendChild(row);
   }
@@ -1039,8 +1074,34 @@ async function main() {
   refreshIso();
 
   // Latest snapshot
-  renderSnapshotNationalBars(snapshot.national);
-  renderSnapshotGrid(snapshot.by_iso);
+  // Day-over-day change for the snapshot. Each ISO card compares against the
+  // day before ITS OWN as_of, since the ISOs publish on different delays.
+  //
+  // The national rollup sums each ISO's own latest day, so its comparison has
+  // to sum each ISO's own previous day the same way. If any one ISO is
+  // missing that day, the national change is left blank: a partial sum
+  // against a full one would read as a national drop that never happened.
+  const isoAsOf = Object.entries(snapshot.by_iso).map(([iso, s]) => [iso, s.as_of]);
+  const wantedPrev = new Set(isoAsOf.map(([iso, asOf]) => `${iso}|${addDays(asOf, -1)}`));
+  const prevMixes = mixesFor(rows, wantedPrev);
+
+  const prevNational = {};
+  let nationalComparable = isoAsOf.length > 0;
+  for (const [iso, asOf] of isoAsOf) {
+    const prev = prevMixes[`${iso}|${addDays(asOf, -1)}`];
+    if (!prev) { nationalComparable = false; break; }
+    for (const [cat, mwh] of Object.entries(prev)) {
+      prevNational[cat] = (prevNational[cat] || 0) + mwh;
+    }
+  }
+  const nationalPrevLabel = "the previous day for every ISO";
+
+  renderSnapshotNationalBars(
+    snapshot.national,
+    nationalComparable ? prevNational : undefined,
+    nationalPrevLabel
+  );
+  renderSnapshotGrid(snapshot.by_iso, prevMixes);
   renderHealthTable(meta.iso_stats, gaps);
   const gapsNote = document.getElementById("gaps-note");
   if (gaps && gaps.summary && Object.keys(gaps.summary).length > 0) {
