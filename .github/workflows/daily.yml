@@ -70,23 +70,6 @@ jobs:
           if [ -n "${{ github.event.inputs.us48_start }}" ]; then ARGS="$ARGS --us48-start ${{ github.event.inputs.us48_start }}"; fi
           python scripts/run_pipeline.py $ARGS
 
-      # The dashboard's Hourly tab calls api.eia.gov from the reader's browser,
-      # so it needs a key the reader does not have. GitHub Pages is static -
-      # there is no server to hide one behind - so the key ships with the site
-      # and is public by construction. That is deliberate and accepted: an EIA
-      # key is free, read-only against public data, and rotating it is just
-      # updating the secret and re-running this workflow. Writing it here
-      # rather than committing it by hand keeps it out of the source and out
-      # of anyone's clipboard. Without the secret the file holds an empty
-      # string and the tab falls back to asking the reader for their own key.
-      - name: Publish the EIA key for the dashboard's Hourly tab
-        if: always()
-        env:
-          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
-        run: |
-          mkdir -p docs/data
-          python -c 'import json, os; json.dump({"eia_api_key": os.environ.get("EIA_API_KEY", "")}, open("docs/data/live_key.json", "w"))'
-
       - name: Commit updated data
         if: always()
         run: |

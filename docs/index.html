@@ -10,7 +10,7 @@
      deployed data. Bump the date whenever app.js or style.css changes; the
      value is arbitrary, only changing it matters. The vendored Chart.js build
      is deliberately left alone - it never changes, so it should stay cached. -->
-<link rel="stylesheet" href="style.css?v=2026-08-07">
+<link rel="stylesheet" href="style.css?v=2026-08-11">
 <script src="vendor/chart.umd.min.js"></script>
 </head>
 <body>
@@ -26,7 +26,6 @@
   <button class="tab-btn" data-view="byiso">National by ISO</button>
   <button class="tab-btn" data-view="iso">Per-ISO Breakdown</button>
   <button class="tab-btn" data-view="snapshot">Latest Snapshot</button>
-  <button class="tab-btn" data-view="live">Hourly (EIA-930)</button>
 </nav>
 
 <main>
@@ -117,7 +116,12 @@
   </section>
 
   <section id="view-snapshot" class="view">
+    <h2 id="snapshot-us48-heading" hidden>U.S. lower-48 total (EIA)</h2>
+    <p class="view-note" id="snapshot-us48-note" hidden></p>
+    <div id="snapshot-us48-bars" class="snapshot-card national-bars" hidden></div>
+
     <h2>Tracked-ISO mix (latest available day per ISO)</h2>
+    <p class="view-note">The seven ISOs this site pulls directly, summed. Smaller than the EIA total above, which also covers the utility-run Southeast, Northwest and Southwest.</p>
     <div id="snapshot-national-bars" class="snapshot-card national-bars"></div>
     <h2>Per-ISO snapshot</h2>
     <div id="snapshot-grid" class="snapshot-grid"></div>
@@ -129,65 +133,6 @@
     <p class="view-note" id="gaps-note"></p>
   </section>
 
-  <section id="view-live" class="view">
-    <div class="controls">
-      <button id="live-refresh" class="refresh-btn">Refresh</button>
-      <span id="live-status" class="live-status"></span>
-      <label>Chart
-        <select id="live-type">
-          <option value="stacked" selected>Stacked</option>
-          <option value="lines">Lines</option>
-        </select>
-      </label>
-    </div>
-    <p class="view-note">
-      Hourly national generation from EIA-930's lower-48 aggregate - the hourly
-      shape the other tabs cannot show, since they carry whole settled days.
-      This is <strong>not real time</strong>: EIA publishes the fuel-type
-      breakdown roughly 12-18 hours after the hour ends, so the newest bar here
-      is normally late yesterday evening. The exact lag is printed next to the
-      headline number. Values are average MW over the hour, shown as GW.
-      Nothing is fetched until you open this tab or press Refresh.
-    </p>
-
-    <div id="live-setup" class="live-setup" hidden>
-      <p>
-        This tab calls the EIA API straight from your browser using this site's
-        own EIA key. If that key is ever rejected or rate-limited, you can put
-        your own free key in here instead -
-        <a href="https://www.eia.gov/opendata/register.php" target="_blank" rel="noopener">register here</a>
-        (instant, email only). It is stored in this browser's local storage and
-        never leaves it except in requests to api.eia.gov.
-      </p>
-      <div class="live-key-row">
-        <input type="text" id="live-key" placeholder="Paste your own EIA API key" autocomplete="off" spellcheck="false">
-        <button id="live-key-save" class="refresh-btn">Save key</button>
-      </div>
-    </div>
-
-    <div id="live-error" class="live-error" hidden></div>
-
-    <div id="live-panels" hidden>
-      <div class="live-top">
-        <div class="snapshot-card live-total-card">
-          <div class="live-total-label">U.S. lower-48 generation</div>
-          <div class="live-total" id="live-total">-</div>
-          <div class="as-of" id="live-asof"></div>
-        </div>
-        <div class="snapshot-card live-bars-card">
-          <div id="live-bars"></div>
-        </div>
-      </div>
-
-      <h2>Last 48 hours</h2>
-      <div class="chart-legend" id="live-legend"></div>
-      <div class="chart-wrap"><canvas id="live-chart"></canvas></div>
-    </div>
-
-    <p class="view-note">
-      <button id="live-key-clear" class="link-btn" hidden>Forget my own EIA key and go back to the site's</button>
-    </p>
-  </section>
 </main>
 
 <footer>
@@ -195,6 +140,6 @@
   <p id="footer-quality"></p>
 </footer>
 
-<script src="app.js?v=2026-08-07"></script>
+<script src="app.js?v=2026-08-11"></script>
 </body>
 </html>
