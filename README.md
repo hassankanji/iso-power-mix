@@ -50,14 +50,20 @@ So ERCOT is always complete to yesterday; recent weeks firm up from preliminary/
 2. **Fuel Comparison** — pick a fuel (defaults to Natural Gas): one line per ISO plus the US48 national line, 7-day smoothing on by default, "% of each area's total" to normalize market size away. *The US48 gas line is total U.S. gas burn.* Switched to **Stacked**, the same view becomes total ISO gas burn split by market, against that national line.
 3. **National by ISO** — each ISO's total contribution, with the same US48 overlay.
 4. **Per-ISO Breakdown** — full fuel mix for one ISO.
-5. **Latest Snapshot** — every ISO's most recent day, in **GWh/TWh with the share alongside** and a daily total per market, plus the freshness table and gap status.
+5. **Latest Snapshot** — every ISO's most recent day, in **GWh/TWh with the share and the day-over-day change alongside**, and a daily total per market, plus the freshness table and gap status. Each ISO is compared against the day before *its own* as-of date, since they publish on different delays; hover the change for the percentage. The national rollup sums each ISO's latest day, so its change sums each ISO's previous day the same way — and is left blank if any one ISO lacks that day, rather than showing a partial sum as a national drop.
 6. **Hourly (EIA-930)** — national generation hour by hour rather than day by day. See below.
 
 Every chart has a **Stacked / Lines** switch: stacked answers "what was the total and who contributed", lines answer "where is this one series going" without the series below it moving the baseline. Also checkbox legends (untick to exclude a series), Bloomberg-style range presets (1D→Max, default 1Y), and free date pickers. Stacked windows under ~2 weeks render as bars.
 
 ### The Hourly tab
 
-Everything else here is settled *daily* data. This tab reads **EIA-930's hourly lower-48 aggregate** (respondent `US48`) straight from the EIA API in your browser: total generation and the split by fuel for the most recently published hour, each fuel's change against the same hour yesterday, and the last 48 hours as a chart. Values are average MW over the hour, shown as GW (the rest of the site is energy per day, in GWh).
+Everything else here is settled *daily* data. This tab reads **EIA-930's hourly lower-48 aggregate** (respondent `US48`) straight from the EIA API in your browser: total generation and the split by fuel for the most recently published hour, plus the last 48 hours as a chart. Values are average MW over the hour, shown as GW (the rest of the site is energy per day, in GWh).
+
+**Why isn't this actually live?** Because EIA isn't. Measured from a runner on 2026-08-11: EIA's US48 by-fuel series was 9.3 hours behind, and `region-data` — the total-net-generation series with no fuel split — was behind by *exactly the same* 9.3 hours, so there is no fresher EIA route to switch to. EIA is a settlement-grade aggregator, not a real-time feed.
+
+Genuinely live data does exist, just not nationally: the ISOs publish their own fuel mix **5–16 minutes** behind (CAISO 6 min, ERCOT 5 min, NYISO 16 min, MISO near real-time). The catch is CORS — only MISO sends a header a static site may read, so using the others requires a scheduled job that fetches server-side and commits the result. See `scripts/diagnose_live.py` for the full measurement and the trade-offs.
+
+There is deliberately **no hour-over-hour or day-over-day comparison here**. Because the newest published hour is ~15 hours old it is almost always a late-evening hour, so comparing it to the same hour yesterday reported solar as collapsed every single time — a real number that read as a signal and wasn't one. Day-over-day change lives on the Latest Snapshot tab, where it compares whole settled days.
 
 **It is not real time**, and it used to claim otherwise. Measured from a runner on 2026-08-07, the newest published hour was **14.7 hours old**, and every hour in the window carried all 16 fuel codes — so that is EIA's publication schedule for the by-fuel breakdown, not a half-written hour being dropped client-side. (EIA's demand and interchange series are far fresher; the fuel split is not.) Budget 12–18 hours. The tab prints the actual lag next to the headline number so you never have to assume.
 

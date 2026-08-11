@@ -282,9 +282,12 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
   font-variant-numeric: tabular-nums;
 }
 
+/* 380px, not 340: the snapshot rows carry a day-over-day change column, and
+   the fixed columns (label + value + share + change) plus gaps need room
+   before the bar track can claim its minimum width. */
 .snapshot-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
   gap: 16px;
 }
 
@@ -333,6 +336,17 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
 .bar-row .value.delta { width: 76px; color: var(--muted); font-size: 0.72rem; }
 .bar-row .value.delta.up { color: #e6a23c; }
 .bar-row .value.delta.down { color: #6fb3e0; }
+
+/* On a phone the fixed columns no longer fit beside a usable bar. Tighten
+   them rather than let the row scroll sideways or crush the track. */
+@media (max-width: 460px) {
+  .bar-row { gap: 6px; font-size: 0.72rem; }
+  .bar-row .label { width: 76px; }
+  .bar-row .value { width: 58px; }
+  .bar-row .value.pct { width: 38px; }
+  .bar-row .value.delta { width: 58px; font-size: 0.66rem; }
+  .snapshot-grid { grid-template-columns: 1fr; }
+}
 
 .bar-row.total-row {
   margin-top: 8px;
