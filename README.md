@@ -50,26 +50,27 @@ So ERCOT is always complete to yesterday; recent weeks firm up from preliminary/
 2. **Fuel Comparison** — pick a fuel (defaults to Natural Gas): one line per ISO plus the US48 national line, 7-day smoothing on by default, "% of each area's total" to normalize market size away. *The US48 gas line is total U.S. gas burn.* Switched to **Stacked**, the same view becomes total ISO gas burn split by market, against that national line.
 3. **National by ISO** — each ISO's total contribution, with the same US48 overlay.
 4. **Per-ISO Breakdown** — full fuel mix for one ISO.
-5. **Latest Snapshot** — every ISO's most recent day, in **GWh/TWh with the share and the day-over-day change alongside**, and a daily total per market, plus the freshness table and gap status. Each ISO is compared against the day before *its own* as-of date, since they publish on different delays; hover the change for the percentage. The national rollup sums each ISO's latest day, so its change sums each ISO's previous day the same way — and is left blank if any one ISO lacks that day, rather than showing a partial sum as a national drop.
-6. **Hourly (EIA-930)** — national generation hour by hour rather than day by day. See below.
+5. **Latest Snapshot** — three levels of the same day, each in **GWh/TWh with the share and the day-over-day change alongside**: EIA's whole lower-48 total, the seven tracked ISOs summed, then a card per ISO. Plus the freshness table and gap status. See below.
 
 Every chart has a **Stacked / Lines** switch: stacked answers "what was the total and who contributed", lines answer "where is this one series going" without the series below it moving the baseline. Also checkbox legends (untick to exclude a series), Bloomberg-style range presets (1D→Max, default 1Y), and free date pickers. Stacked windows under ~2 weeks render as bars.
 
-### The Hourly tab
+### The Latest Snapshot tab
 
-Everything else here is settled *daily* data. This tab reads **EIA-930's hourly lower-48 aggregate** (respondent `US48`) straight from the EIA API in your browser: total generation and the split by fuel for the most recently published hour, plus the last 48 hours as a chart. Values are average MW over the hour, shown as GW (the rest of the site is energy per day, in GWh).
+Three nested views of the most recent day, each carrying a **change against the previous day** next to the value (hover it for the percentage):
 
-**Why isn't this actually live?** Because EIA isn't. Measured from a runner on 2026-08-11: EIA's US48 by-fuel series was 9.3 hours behind, and `region-data` — the total-net-generation series with no fuel split — was behind by *exactly the same* 9.3 hours, so there is no fresher EIA route to switch to. EIA is a settlement-grade aggregator, not a real-time feed.
+- **U.S. lower-48 total (EIA)** — the whole country as EIA-930 measures it, including the utility-run Southeast, Northwest and Southwest that no ISO covers. This runs on EIA's clock, which is slower than the ISOs', so its day is often one behind theirs; the heading always says which day it is.
+- **Tracked-ISO mix** — the seven ISOs this site pulls directly, summed. Roughly two-thirds of the EIA total above.
+- **Per-ISO cards** — each market on its own, compared against the day before *its own* as-of date, since the ISOs publish on different delays.
 
-Genuinely live data does exist, just not nationally: the ISOs publish their own fuel mix **5–16 minutes** behind (CAISO 6 min, ERCOT 5 min, NYISO 16 min, MISO near real-time). The catch is CORS — only MISO sends a header a static site may read, so using the others requires a scheduled job that fetches server-side and commits the result. See `scripts/diagnose_live.py` for the full measurement and the trade-offs.
+The tracked-ISO change sums each ISO's previous day the same way its total sums each ISO's latest day. If any one ISO lacks that previous day the change is left blank rather than showing a partial sum against a full one, which would read as a national drop that never happened.
 
-There is deliberately **no hour-over-hour or day-over-day comparison here**. Because the newest published hour is ~15 hours old it is almost always a late-evening hour, so comparing it to the same hour yesterday reported solar as collapsed every single time — a real number that read as a signal and wasn't one. Day-over-day change lives on the Latest Snapshot tab, where it compares whole settled days.
+### Why there's no live view
 
-**It is not real time**, and it used to claim otherwise. Measured from a runner on 2026-08-07, the newest published hour was **14.7 hours old**, and every hour in the window carried all 16 fuel codes — so that is EIA's publication schedule for the by-fuel breakdown, not a half-written hour being dropped client-side. (EIA's demand and interchange series are far fresher; the fuel split is not.) Budget 12–18 hours. The tab prints the actual lag next to the headline number so you never have to assume.
+There was an Hourly (EIA-930) tab. It was removed: it could never be live, and a not-live "live" tab is worse than none.
 
-It fetches **only when you open the tab or press Refresh** — no polling, no Actions minutes, no commits. The last pull is cached in the browser so the tab is never blank.
+Measured from a runner on 2026-08-11 (`scripts/diagnose_live.py`), EIA's US48 by-fuel series was **9.3 hours behind**, and `region-data` — the total-net-generation series with no fuel split — was behind by *exactly the same* 9.3 hours. There is no fresher EIA endpoint to switch to; EIA is a settlement-grade aggregator, not a real-time feed.
 
-**No setup:** the site ships its own EIA key, written into `docs/data/live_key.json` from the `EIA_API_KEY` Actions secret by the daily workflow, so readers need no key of their own. That key is public by construction — GitHub Pages is static and has no server to hide one behind — which is an accepted trade: an EIA key is free, grants nothing beyond read access to public EIA data, and rotating it means updating the secret and re-running the workflow. If it is ever rejected or rate-limited, the tab offers a box for your own free [EIA key](https://www.eia.gov/opendata/register.php), kept in your browser's local storage and preferred over the site's until you clear it.
+Genuinely live data does exist, just not nationally. The ISOs publish their own fuel mix **5–16 minutes** behind (ERCOT 5 min, CAISO 6 min, NYISO 16 min, MISO near real-time). Two things stand in the way of putting that on this site: only MISO sends a CORS header a static page may read, and the only server available here is GitHub Actions, whose scheduler routinely runs crons 30–90 minutes late. An Actions-based collector would realistically deliver 15–60 minute data. Truly 5-minute data needs an always-on host or a CORS proxy.
 
 ### What "storage" means
 

@@ -409,7 +409,7 @@ function initDateInputs(startInput, endInput, range) {
 // series are remembered per view, surviving range/toggle changes that
 // rebuild the chart.
 
-const hiddenSeries = { national: new Set(), fuel: new Set(), byiso: new Set(), iso: new Set(), live: new Set() };
+const hiddenSeries = { national: new Set(), fuel: new Set(), byiso: new Set(), iso: new Set() };
 
 function buildLegend(viewKey, chart) {
   const container = document.getElementById(`${viewKey}-legend`);
@@ -553,6 +553,45 @@ function mixesFor(rows, wanted) {
   return out;
 }
 
+// EIA's lower-48 total for its own latest day, with the change against the
+// day before it. This is the whole country - the utility-run Southeast,
+// Northwest and Southwest included - not the seven tracked ISOs, so it is
+// deliberately a separate panel rather than another card in the ISO grid.
+//
+// It runs on its own clock: EIA publishes later than the ISOs do, so its
+// latest day is often a day behind theirs. The heading states which day it
+// is instead of implying it lines up with the ISO snapshot.
+function renderSnapshotUs48(usRows) {
+  const heading = document.getElementById("snapshot-us48-heading");
+  const note = document.getElementById("snapshot-us48-note");
+  const bars = document.getElementById("snapshot-us48-bars");
+  if (usRows.length === 0) return;
+
+  const latest = usRows.reduce((m, r) => (r.date > m ? r.date : m), "0000-00-00");
+  const prevDate = addDays(latest, -1);
+  const byDate = { [latest]: {}, [prevDate]: {} };
+  for (const r of usRows) {
+    if (r.date === latest || r.date === prevDate) {
+      byDate[r.date][r.cat] = (byDate[r.date][r.cat] || 0) + r.mwh;
+    }
+  }
+  const mix = Object.entries(byDate[latest]).map(([fuel_category, generation_mwh]) => ({
+    fuel_category,
+    generation_mwh,
+  }));
+  if (mix.length === 0) return;
+  const havePrev = Object.keys(byDate[prevDate]).length > 0;
+
+  heading.hidden = false;
+  note.hidden = false;
+  bars.hidden = false;
+  note.textContent =
+    `EIA-930's measurement of the entire U.S. lower 48 for ${latest}` +
+    (havePrev ? `, with the change against ${prevDate}.` : ".") +
+    " EIA publishes on its own schedule, so this day can differ from the per-ISO days below.";
+  renderBarRows(bars, mix, undefined, havePrev ? byDate[prevDate] : undefined, prevDate);
+}
+
 function renderSnapshotNationalBars(mix, prev, prevLabel) {
   renderBarRows(document.getElementById("snapshot-national-bars"), mix, undefined, prev, prevLabel);
 }
@@ -617,362 +656,6 @@ function renderStatusChips(isoStats, meta) {
   if (nInterp > 0) chip(`${nInterp} missing source days estimated by interpolation`, "info");
 }
 
-// ---------------------------------------------------------------------------
-// Hourly (EIA-930) tab
-//
-// Everything else on this dashboard is settled *daily* data. This tab reads
-// EIA-930's hourly fuel-type series for respondent US48 - EIA's own lower-48
-// aggregate, one number per fuel per hour - which is what the other tabs
-// cannot show: the intraday shape.
-//
-// It is NOT real time, and this tab no longer claims to be. Measured on a
-// runner 2026-08-07: the newest published hour was 14.7 hours old, and every
-// hour in the window carried all 16 fuel codes, so the lag is EIA's
-// publication schedule for the fuel-type breakdown, not a partial-hour
-// artifact. (EIA's demand/interchange series is far fresher; the by-fuel
-// split is not.) Budget 12-18 hours and show the reader the real number.
-//
-// It is fetched from the browser on demand (the Refresh button) rather than
-// polled or baked into the daily export: no extra Actions minutes, no commits,
-// and nothing fetched at all unless a reader opens this tab.
-//
-// Key handling: the site ships its own EIA key in data/live_key.json, written
-// from the EIA_API_KEY Actions secret at publish time (never typed into the
-// source - see .github/workflows/daily.yml), so a reader needs no key of
-// their own. It is a published key by construction: GitHub Pages is static
-// and has no server to hide one behind. That is an accepted trade - an EIA
-// key is free, grants nothing but read access to public EIA data, and is
-// rotated by re-running the workflow. A reader can still override it with
-// their own key (localStorage), which is what the setup box offers when the
-// shared key is rejected or rate-limited.
-
-const EIA_LIVE_URL = "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/";
-const LIVE_HOURS = 48;
-const LIVE_KEY_STORE = "isoPowerMix.eiaApiKey";
-const LIVE_CACHE_STORE = "isoPowerMix.liveCache.v1";
-const LIVE_CACHE_MAX_AGE_MS = 30 * 60 * 1000; // auto-fetch on open only if staler
-
-// Same mapping as src/eia.py's _FUELTYPE_TO_CANONICAL - keep the two in sync.
-// Anything unrecognized buckets to imports_other rather than being dropped.
-// OES/UES/WNB were missing here and in eia.py until the US48 code dump on
-// 2026-08-07; UES is "Unknown energy storage" and was being read as "other".
-const EIA_FUEL_TO_CANONICAL = {
-  COL: "coal", NG: "natural_gas", NUC: "nuclear", WAT: "hydro", SUN: "solar",
-  SNB: "solar", WND: "wind", WNB: "wind",
-  BAT: "storage", PS: "storage", OES: "storage", UES: "storage",
-  GEO: "other_renewables", BIO: "other_renewables",
-  OIL: "imports_other", OTH: "imports_other", UNK: "imports_other",
-};
-
-// The site's own key, loaded once from data/live_key.json. Empty string means
-// "loaded, and there isn't one" (a fork with no EIA_API_KEY secret); null
-// means "not loaded yet".
-let sharedLiveKey = null;
-
-async function loadSharedLiveKey() {
-  const payload = await loadJSON("live_key.json", true);
-  sharedLiveKey = (payload && payload.eia_api_key) || "";
-  return sharedLiveKey;
-}
-
-function ownLiveKey() {
-  try { return localStorage.getItem(LIVE_KEY_STORE) || ""; } catch { return ""; }
-}
-
-// A reader's own key wins over the shared one - that is the whole point of
-// the override when the shared key is rate-limited.
-function liveKey() {
-  return ownLiveKey() || sharedLiveKey || "";
-}
-
-function readLiveCache() {
-  try { return JSON.parse(localStorage.getItem(LIVE_CACHE_STORE) || "null"); } catch { return null; }
-}
-
-function writeLiveCache(payload) {
-  try { localStorage.setItem(LIVE_CACHE_STORE, JSON.stringify(payload)); } catch { /* private mode, quota */ }
-}
-
-// EIA hourly periods are UTC hour stamps ("2026-08-06T15"); shown in the
-// reader's own timezone, since "is it peak yet" is a local question.
-function formatLivePeriod(period) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})$/.exec(period);
-  if (!m) return period;
-  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4]));
-  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric" });
-}
-
-function periodToDate(period) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})$/.exec(period);
-  return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4])) : null;
-}
-
-// EIA hour stamps are UTC, and so is this - `start` must be in the API's own
-// clock or the window slides by the reader's offset.
-function utcHourStamp(msFromNow) {
-  return new Date(Date.now() + msFromNow).toISOString().slice(0, 13);
-}
-
-// An hourly MWh value over a one-hour period *is* the average MW for that
-// hour, so these are read as power (GW) rather than energy.
-//
-// `start` is not optional in practice: an unbounded sort-by-period-desc query
-// makes EIA scan the whole hourly history and it answers 503 after ~35s
-// (measured). Bounding the window to the last couple of days keeps it quick.
-async function fetchLiveHours(apiKey) {
-  const params = new URLSearchParams({
-    api_key: apiKey,
-    frequency: "hourly",
-    "data[0]": "value",
-    "facets[respondent][]": "US48",
-    start: utcHourStamp(-(LIVE_HOURS + 12) * 3600 * 1000),
-    "sort[0][column]": "period",
-    "sort[0][direction]": "desc",
-    length: String((LIVE_HOURS + 12) * 16), // ~10-13 fuel codes per hour, with headroom
-    offset: "0",
-  });
-  let res;
-  try {
-    res = await fetch(`${EIA_LIVE_URL}?${params}`, { cache: "no-store" });
-  } catch (e) {
-    throw new Error(`Could not reach api.eia.gov (${e.message}). Check the connection, or whether a browser extension is blocking the request.`);
-  }
-  if (res.status === 403 || res.status === 401 || res.status === 429) {
-    const e = new Error(
-      res.status === 429
-        ? "EIA is rate-limiting this site's API key. Paste your own free key below to keep going."
-        : "EIA rejected this site's API key. Paste your own free key below to keep going."
-    );
-    e.keyProblem = true; // surfaces the bring-your-own-key box
-    throw e;
-  }
-  if (res.status === 503 || res.status === 504) {
-    throw new Error("EIA's API is not responding right now (503). This happens periodically - press Refresh again in a minute.");
-  }
-  if (!res.ok) throw new Error(`EIA API returned ${res.status} ${res.statusText}.`);
-  let payload;
-  try {
-    payload = await res.json();
-  } catch {
-    throw new Error("EIA returned a non-JSON response (usually its edge cache erroring). Press Refresh again in a minute.");
-  }
-  const data = ((payload || {}).response || {}).data || [];
-  if (data.length === 0) throw new Error("EIA returned no rows for US48 - the feed may be briefly down.");
-  return data;
-}
-
-// Rolls the raw rows into {period -> {cat -> MW}}, newest first. The newest
-// hour is dropped when it reports fewer fuel codes than the hours behind it:
-// EIA publishes an hour incrementally, and a half-reported hour would read as
-// a sudden national outage.
-function rollLiveHours(rows) {
-  const byPeriod = new Map();
-  for (const r of rows) {
-    const mw = Number(r.value);
-    if (!Number.isFinite(mw)) continue;
-    const cat = EIA_FUEL_TO_CANONICAL[String(r.fueltype || "").toUpperCase()] || "imports_other";
-    if (!byPeriod.has(r.period)) byPeriod.set(r.period, { period: r.period, mix: {}, codes: new Set() });
-    const rec = byPeriod.get(r.period);
-    rec.mix[cat] = (rec.mix[cat] || 0) + mw;
-    rec.codes.add(r.fueltype);
-  }
-  const hours = [...byPeriod.values()].sort((a, b) => (a.period < b.period ? 1 : -1));
-  const fullCount = Math.max(...hours.map(h => h.codes.size));
-  while (hours.length > 1 && hours[0].codes.size < fullCount) hours.shift();
-  // Storage is discharge-only everywhere in this project (see src/schema.py):
-  // an hour of net charging is an hour of zero storage generation, not a
-  // negative slice in a stacked mix.
-  for (const h of hours) {
-    if (h.mix.storage < 0) h.mix.storage = 0;
-  }
-  // The request asks for more than LIVE_HOURS so the window is still full
-  // after the unpublished tail is dropped; the surplus is trimmed here.
-  return hours.slice(0, LIVE_HOURS)
-    .map(h => ({ period: h.period, mix: h.mix, total: Object.values(h.mix).reduce((s, v) => s + v, 0) }));
-}
-
-function fmtPower(mw) {
-  const gw = mw / 1000;
-  if (Math.abs(gw) >= 10) return `${gw.toLocaleString(undefined, { maximumFractionDigits: 1 })} GW`;
-  return `${gw.toLocaleString(undefined, { maximumFractionDigits: 2 })} GW`;
-}
-
-// Per-fuel bars for the newest published hour.
-//
-// There is deliberately no "vs the same hour yesterday" column here. It read
-// as a market signal but wasn't one: the newest hour EIA publishes is ~15
-// hours old, so it is almost always a late-evening hour, and comparing one
-// late-evening hour to the previous one just reported solar as collapsed
-// every single time. A day-over-day comparison belongs on whole days, where
-// the daily tabs make it - see the Latest Snapshot tab.
-function renderLiveBars(hours) {
-  const container = document.getElementById("live-bars");
-  container.innerHTML = "";
-  const now = hours[0];
-  const sorted = CATEGORIES
-    .map(cat => ({ cat, mw: now.mix[cat] || 0 }))
-    .filter(d => d.mw !== 0)
-    .sort((a, b) => b.mw - a.mw);
-  for (const { cat, mw } of sorted) {
-    const pct = now.total > 0 ? (mw / now.total) * 100 : 0;
-    const row = document.createElement("div");
-    row.className = "bar-row";
-    row.innerHTML = `
-      <span class="label">${LABELS[cat] || cat}</span>
-      <span class="bar-track"><span class="bar-fill" style="width:${Math.max(pct, 0)}%;background:${colorFor(cat)}"></span></span>
-      <span class="value">${fmtPower(mw)}</span>
-      <span class="value pct">${pct.toFixed(1)}%</span>
-    `;
-    container.appendChild(row);
-  }
-}
-
-let liveChart;
-
-function renderLiveChart(hours, chartType) {
-  const ordered = [...hours].reverse(); // oldest -> newest for the x axis
-  const labels = ordered.map(h => formatLivePeriod(h.period));
-  const datasets = CATEGORIES
-    .filter(cat => ordered.some(h => (h.mix[cat] || 0) !== 0))
-    .map(cat => ({
-      label: LABELS[cat],
-      data: ordered.map(h => (h.mix[cat] || 0) / 1000),
-      backgroundColor: colorFor(cat),
-      borderColor: colorFor(cat),
-      fill: true,
-      stack: "mix",
-      pointRadius: 0,
-      borderWidth: 1,
-    }));
-  if (liveChart) liveChart.destroy();
-  liveChart = new Chart(document.getElementById("live-chart"),
-    mixChartConfig(labels, applyChartType(datasets, chartType), "GW (US lower-48)", false, chartType));
-  buildLegend("live", liveChart);
-}
-
-// "14 hours behind" is the number that stops a reader treating this as live,
-// so it sits next to the headline rather than in the fine print.
-function fmtLag(period) {
-  const stamp = periodToDate(period);
-  if (!stamp) return "";
-  const hours = (Date.now() - stamp.getTime()) / 3600000;
-  if (hours < 1.5) return " - about an hour behind";
-  if (hours < 48) return ` - ${Math.round(hours)} hours behind`;
-  return ` - ${Math.round(hours / 24)} days behind`;
-}
-
-function renderLive(hours, fetchedAt, chartType) {
-  const now = hours[0];
-  document.getElementById("live-total").textContent = fmtPower(now.total);
-  document.getElementById("live-asof").textContent =
-    `hour ending ${formatLivePeriod(now.period)}${fmtLag(now.period)}`;
-  renderLiveBars(hours);
-  renderLiveChart(hours, chartType);
-  document.getElementById("live-panels").hidden = false;
-}
-
-function setupLiveTab() {
-  const refreshBtn = document.getElementById("live-refresh");
-  const statusEl = document.getElementById("live-status");
-  const errorEl = document.getElementById("live-error");
-  const setupEl = document.getElementById("live-setup");
-  const keyInput = document.getElementById("live-key");
-  const saveBtn = document.getElementById("live-key-save");
-  const forgetBtn = document.getElementById("live-key-clear");
-  const typeSelect = document.getElementById("live-type");
-
-  let hours = null;      // newest-first rolled hours from the last successful fetch
-  let fetchedAt = null;
-  let inFlight = false;
-
-  const showError = (msg) => {
-    errorEl.textContent = msg;
-    errorEl.hidden = !msg;
-  };
-
-  // The setup box is a fallback now, not a gate: it appears only when there
-  // is no usable key at all, or when the shared one has just been refused.
-  const syncKeyUi = (keyProblem = false) => {
-    const key = liveKey();
-    setupEl.hidden = !!key && !keyProblem;
-    forgetBtn.hidden = !ownLiveKey();
-    refreshBtn.disabled = !key;
-    if (!key && sharedLiveKey !== null) {
-      statusEl.textContent = "No EIA API key available - add one below to enable this tab";
-    }
-  };
-
-  // Resolves once data/live_key.json has been consulted. Everything that
-  // needs a key waits on it, so the tab never decides "no key" prematurely.
-  const keyReady = loadSharedLiveKey().catch(() => { sharedLiveKey = ""; }).then(() => syncKeyUi());
-
-  const refresh = async () => {
-    await keyReady;
-    const key = liveKey();
-    if (!key || inFlight) return;
-    inFlight = true;
-    refreshBtn.disabled = true;
-    statusEl.textContent = "Fetching from EIA...";
-    showError("");
-    try {
-      const rolled = rollLiveHours(await fetchLiveHours(key));
-      hours = rolled;
-      fetchedAt = Date.now();
-      writeLiveCache({ hours: rolled, fetchedAt });
-      renderLive(hours, fetchedAt, typeSelect.value);
-      statusEl.textContent = `Updated ${new Date(fetchedAt).toLocaleTimeString()}`;
-    } catch (e) {
-      showError(e.message);
-      if (e.keyProblem) syncKeyUi(true);
-      statusEl.textContent = hours ? "Showing the last successful pull" : "No data loaded";
-    } finally {
-      inFlight = false;
-      refreshBtn.disabled = !liveKey();
-    }
-  };
-
-  saveBtn.addEventListener("click", () => {
-    const key = keyInput.value.trim();
-    if (!key) return;
-    try { localStorage.setItem(LIVE_KEY_STORE, key); } catch { showError("This browser blocked localStorage, so the key can't be saved."); }
-    keyInput.value = "";
-    syncKeyUi();
-    refresh();
-  });
-  keyInput.addEventListener("keydown", (e) => { if (e.key === "Enter") saveBtn.click(); });
-
-  // Dropping a personal key falls back to the site's own rather than
-  // emptying the tab, so this is now an undo, not a teardown.
-  forgetBtn.addEventListener("click", () => {
-    try { localStorage.removeItem(LIVE_KEY_STORE); } catch { /* ignore */ }
-    showError("");
-    syncKeyUi();
-    if (liveKey()) refresh();
-  });
-
-  refreshBtn.addEventListener("click", refresh);
-  typeSelect.addEventListener("change", () => { if (hours) renderLiveChart(hours, typeSelect.value); });
-
-  // Last pull is redrawn immediately so the tab is never blank, then a fetch
-  // fires only if it has gone stale - one automatic request per visit at most.
-  const cached = readLiveCache();
-  if (cached && cached.hours && cached.hours.length > 0) {
-    hours = cached.hours;
-    fetchedAt = cached.fetchedAt;
-    renderLive(hours, fetchedAt, typeSelect.value);
-    statusEl.textContent = `Last pull ${new Date(fetchedAt).toLocaleString()}`;
-  }
-  syncKeyUi();
-
-  let autoFetched = false;
-  return async () => { // called when the tab is opened
-    await keyReady;
-    if (autoFetched || !liveKey()) return;
-    autoFetched = true;
-    if (!fetchedAt || Date.now() - fetchedAt > LIVE_CACHE_MAX_AGE_MS) refresh();
-  };
-}
-
 function setupTabs(onOpen = {}) {
   document.querySelectorAll(".tab-btn").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -986,9 +669,7 @@ function setupTabs(onOpen = {}) {
 }
 
 async function main() {
-  // The live tab is wired first and stands alone: it reads EIA directly, so
-  // it still works if the committed exports below fail to load.
-  setupTabs({ live: setupLiveTab() });
+  setupTabs();
 
   const meta = await loadJSON("meta.json");
   const [allRows, snapshot, gaps] = await Promise.all([
@@ -1096,6 +777,7 @@ async function main() {
   }
   const nationalPrevLabel = "the previous day for every ISO";
 
+  renderSnapshotUs48(usRows);
   renderSnapshotNationalBars(
     snapshot.national,
     nationalComparable ? prevNational : undefined,
