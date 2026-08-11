@@ -17,7 +17,7 @@ on:
         required: false
         default: "30"
       mode:
-        description: "reconcile (default) or diagnose-storage"
+        description: "reconcile (default), diagnose-storage, or diagnose-live"
         required: false
         default: "reconcile"
 
@@ -49,6 +49,12 @@ jobs:
         env:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python scripts/diagnose_storage.py
+
+      - name: Diagnose live-data feasibility
+        if: github.event.inputs.mode == 'diagnose-live'
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: python scripts/diagnose_live.py
 
       - name: Commit report
         if: github.event.inputs.mode != 'diagnose-storage'
