@@ -23,10 +23,29 @@ offset (the 1-hour DST error this ignores misallocates <0.2% of a day's
 energy between two adjacent days, twice a year).
 
 EIA fuel codes are coarser than some ISO feeds: petroleum (OIL) and
-unknown (UNK) land in imports_other, pumped storage may be inside WAT
-(hydro) depending on vintage, and battery storage (BAT) only exists in
-recent years. Codes are mapped defensively; anything unrecognized goes to
+unknown (UNK) land in imports_other, and battery storage (BAT) only exists
+in recent years. Codes are mapped defensively; anything unrecognized goes to
 imports_other rather than being dropped.
+
+STORAGE CODES NEVER COME FROM THE DAILY ROUTE. BAT, PS, OES and UES are all
+net of charging, and a value already netted over a day cannot be turned back
+into discharge - so every one of them is dropped from the daily route and
+rebuilt from the hourly one, clipped at zero per hour before being summed
+into local days. That is true of PS as much as of BAT: PS lands in hydro,
+because every ISO feed reports pumped storage inside its hydro column, but
+taking it from the daily route would add a net-convention number to a
+gross-generation bucket.
+
+THE NATIONAL SERIES IS SUMMED, NOT CLIPPED. For iso='US48' the storage
+buckets come from _national_storage_daily, which adds up each balancing
+authority's own clipped discharge. Clipping EIA's pre-summed US48 row
+instead cancels one region's discharge against another's charging - 21% of
+national discharge deleted when measured on 2026-08-13. Every other bucket
+still comes from the US48 daily route, where a sum is just a sum.
+
+None of that closes the gap in EIA's national battery figure: CISO, PJM and
+NYIS report no battery series at all (NO_BATTERY_SERIES_AT_EIA), so the
+country's largest fleet is simply absent from it. See src/schema.py.
 """
 from __future__ import annotations
 
