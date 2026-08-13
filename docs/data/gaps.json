@@ -4,6 +4,17 @@
   "ERCOT": {},
   "MISO": {}
  },
+ "bucket_fill_floor": {
+  "ERCOT": {
+   "battery": "2024-11-06"
+  },
+  "ISONE": {
+   "battery": "2024-11-06"
+  },
+  "SPP": {
+   "battery": "2026-02-04"
+  }
+ },
  "summary": {},
- "updated": "2026-08-13T12:54:43+00:00"
+ "updated": "2026-08-13T15:21:50+00:00"
 }
