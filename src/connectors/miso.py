@@ -94,10 +94,10 @@ _NATIVE_TO_CANONICAL = {
     "wind": "wind",
     "solar": "solar",
     "other": "imports_other",
-    "storage": "storage",
+    "storage": "battery",
     # no-auth FuelMix `CATEGORY` values
     "natural gas": "natural_gas",
-    "battery storage": "storage",
+    "battery storage": "battery",
     "imports": "imports_other",
 }
 

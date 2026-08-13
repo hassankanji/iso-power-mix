@@ -58,12 +58,16 @@ HOURS_PER_DAY = 24
 # See src/schema.py for why discharge-only is the canonical definition.
 #
 # Clipping MUST happen here, on the native interval readings, not on a daily
-# total: a day's net storage is (discharge - charging), and flooring THAT at
-# zero would report a day of heavy cycling as zero generation. Clipping each
-# interval and then averaging gives exactly the discharge energy, because
-# mean(MW) * 24h over N evenly spaced readings is just the interval sum
-# rescaled.
-DISCHARGE_ONLY_CATEGORIES = {"storage"}
+# total: a day's net battery output is (discharge - charging), and flooring
+# THAT at zero would report a day of heavy cycling as zero generation.
+# Clipping each interval and then averaging gives exactly the discharge
+# energy, because mean(MW) * 24h over N evenly spaced readings is just the
+# interval sum rescaled.
+#
+# Pumped hydro is not listed here because no ISO feed breaks it out - they all
+# report it inside their hydro column already. EIA does break it out, and
+# src/eia.py clips it there before folding it into hydro.
+DISCHARGE_ONLY_CATEGORIES = {"battery"}
 
 
 def _clip_discharge_only(mw: pd.Series, canon: str) -> pd.Series:
@@ -89,7 +93,7 @@ def wide_to_daily_mwh(
     native columns - a bug that halved SPP's history until caught by
     reconciling against EIA totals.
 
-    DISCHARGE_ONLY_CATEGORIES (storage) are clipped at zero per row, AFTER
+    DISCHARGE_ONLY_CATEGORIES (battery) are clipped at zero per row, AFTER
     the natives sharing the bucket are summed: it is the fleet's net output
     in that interval that decides whether the fleet was discharging, not any
     one column's sign.
@@ -135,10 +139,10 @@ def long_to_daily_mwh(
     `category_map` is a dict (unmapped natives are dropped) or a callable
     (applied to every native; use for .get(..., fallback) semantics).
 
-    DISCHARGE_ONLY_CATEGORIES (storage) are clipped at zero on the raw
+    DISCHARGE_ONLY_CATEGORIES (battery) are clipped at zero on the raw
     readings, before any averaging. Unlike the wide path this clips each
     native separately, because a long table gives no timestamp to sum two
-    storage natives across first - correct as long as one native carries the
+    battery natives across first - correct as long as one native carries the
     bucket, which is the case for every long-format source we read (MISO's
     "storage", PJM's "storage").
     """

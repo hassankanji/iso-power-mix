@@ -75,6 +75,19 @@ def save_state(state: dict, missing_by_iso: dict[str, list[dt.date]]) -> None:
         json.dump(state, f, indent=1, sort_keys=True)
 
 
+def patch_state(mutate) -> None:
+    """Apply an in-place edit to the persisted state, leaving the summary
+    block alone. For passes that run after save_state and only need to
+    remember a little bookkeeping of their own - the EIA bucket fill's record
+    of how far back EIA's coverage actually reaches, so it stops asking about
+    years that predate a respondent's battery series."""
+    state = load_state()
+    mutate(state)
+    GAPS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(GAPS_PATH, "w") as f:
+        json.dump(state, f, indent=1, sort_keys=True)
+
+
 def dates_to_ranges(dates: list[dt.date]) -> list[tuple[dt.date, dt.date]]:
     """Compress a sorted date list into inclusive contiguous ranges."""
     ranges: list[tuple[dt.date, dt.date]] = []

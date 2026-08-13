@@ -82,7 +82,7 @@ _NATIVE_TO_CANONICAL: dict[str, str] = {
     "solar": "solar",
     "wind": "wind",
     "wind solar": "wind",  # combined bucket seen in some PJM views; approximated as wind
-    "storage": "storage",
+    "storage": "battery",
     "other renewables": "other_renewables",
     "black liquor": "other_renewables",  # biomass byproduct fuel
     "multiple fuels": "imports_other",

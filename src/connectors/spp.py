@@ -59,6 +59,12 @@ from src.connectors.base import finalize, http_session, wide_to_daily_mwh
 ISO = "SPP"
 EARLIEST_DATE = date(2011, 1, 1)
 REQUIRES_AUTH = False
+# SPP's own report has no battery column in any year fetched (the names
+# below are defensive, in case one appears). EIA's SWPP respondent does
+# publish one - small, ~0.8 GWh/day in mid-2026, but real - so the pipeline
+# fills the bucket from there rather than leaving a flat zero that reads as
+# "the batteries did nothing".
+EIA_BACKED_CATEGORIES = ("battery",)
 
 _DOWNLOAD_BASE = (
     "https://portal.spp.org/file-browser-api/download/generation-mix-historical?path=/{path}"
@@ -103,12 +109,12 @@ _CATEGORY_MAP = {
     "Other": "imports_other",
     "Other Market": "imports_other",
     "Other Self": "imports_other",
-    "Battery": "storage",
-    "Battery Market": "storage",
-    "Battery Self": "storage",
-    "Storage": "storage",
-    "Storage Market": "storage",
-    "Storage Self": "storage",
+    "Battery": "battery",
+    "Battery Market": "battery",
+    "Battery Self": "battery",
+    "Storage": "battery",
+    "Storage Market": "battery",
+    "Storage Self": "battery",
 }
 
 

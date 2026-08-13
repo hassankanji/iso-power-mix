@@ -1,13 +1,18 @@
 const CATEGORIES = [
   "natural_gas", "coal", "nuclear", "hydro", "wind",
-  "solar", "other_renewables", "storage", "imports_other",
+  "solar", "other_renewables", "battery", "imports_other",
 ];
 
 const LABELS = {
   natural_gas: "Natural Gas", coal: "Coal", nuclear: "Nuclear", hydro: "Hydro",
   wind: "Wind", solar: "Solar", other_renewables: "Other Renewables",
-  storage: "Storage", imports_other: "Imports / Other",
+  battery: "Battery", imports_other: "Imports / Other",
 };
+
+// Year files written before the bucket was renamed carry the old name. One
+// export run rewrites them all, but a reader holding a cached copy of an
+// older file must still decode. Mirrors src/schema.py's alias table.
+const LEGACY_CATEGORIES = { storage: "battery" };
 
 const ALL_ISOS = ["CAISO", "PJM", "ERCOT", "MISO", "SPP", "NYISO", "ISONE"];
 
@@ -41,7 +46,7 @@ async function loadAllRows(meta) {
   const payloads = await Promise.all(meta.years.map(y => loadJSON(`iso_daily_${y}.json`)));
   const rows = [];
   for (const payload of payloads) {
-    const cats = payload.fuel_categories || CATEGORIES;
+    const cats = (payload.fuel_categories || CATEGORIES).map(c => LEGACY_CATEGORIES[c] || c);
     for (const r of payload.rows) {
       rows.push({ date: r[0], iso: r[1], cat: cats[r[2]], mwh: r[3], est: r.length > 4 && r[4] ? 1 : 0 });
     }
@@ -167,6 +172,8 @@ function pivotSingleIso(rows, iso, startDate, endDate, asPct) {
   return { dates, datasets };
 }
 
+const SMOOTH_WINDOW = 7;
+
 // One line per ISO for a single fuel, plus the US48 national line for that
 // fuel (total national gas burn, etc.). Missing (date, iso) pairs become
 // null so lines visibly bridge gaps (spanGaps) instead of plunging to zero.
@@ -174,30 +181,41 @@ function pivotSingleIso(rows, iso, startDate, endDate, asPct) {
 // band (national gas burn, split by market). Stacking cannot express "this
 // ISO had no data that day", so on that path the nulls become zeros - the
 // same convention the National Trend stack already uses.
+//
+// Smoothing reads SMOOTH_WINDOW-1 days of run-up BEFORE the requested start
+// and drops them again once the means are computed, so every plotted point is
+// a true 7-day average. Averaging only what's inside the window instead makes
+// the left edge of a short range a 1-, 2-, 3-day mean wearing a 7-day label:
+// on a 1W range that was six of the seven points.
 function pivotFuelComparison(rows, usRows, cat, startDate, endDate, asPct, smooth, stacked) {
+  const runUpStart = smooth ? addDays(startDate, -(SMOOTH_WINDOW - 1)) : startDate;
   const value = {};      // `${date}|${iso}` -> mwh of selected fuel
   const isoTotals = {};  // `${date}|${iso}` -> mwh across all fuels
   const dateSet = new Set();
   for (const r of rows) {
-    if (r.date < startDate || r.date > endDate) continue;
+    if (r.date < runUpStart || r.date > endDate) continue;
     const key = `${r.date}|${r.iso}`;
     isoTotals[key] = (isoTotals[key] || 0) + r.mwh;
     if (r.cat === cat) value[key] = (value[key] || 0) + r.mwh;
     dateSet.add(r.date);
   }
-  const dates = [...dateSet].sort();
+  const allDates = [...dateSet].sort();
+  const dates = allDates.filter(d => d >= startDate);
+  // The run-up is a prefix of allDates, so dropping it is a tail slice.
+  const trim = (series) => series.slice(allDates.length - dates.length);
+
   const datasets = [];
   for (const iso of ALL_ISOS) {
-    let any = false;
-    const data = dates.map(d => {
+    const data = allDates.map(d => {
       const key = `${d}|${iso}`;
       if (!(key in isoTotals)) return null; // ISO has no data that day at all
       const v = value[key] || 0;
-      if (v !== 0) any = true;
       return asPct ? (isoTotals[key] > 0 ? (v / isoTotals[key]) * 100 : 0) : v / 1000;
     });
-    if (!any) continue; // e.g. storage in ISOs whose reports have no storage column
-    const series = smooth ? movingAverage(data, 7) : data;
+    const series = trim(smooth ? movingAverage(data, SMOOTH_WINDOW) : data);
+    // e.g. storage in ISOs whose reports have no storage column - judged on
+    // what's actually on screen, not on the run-up days nobody sees.
+    if (!series.some(v => v !== null && v !== 0)) continue;
     datasets.push({
       label: iso,
       data: stacked ? series.map(v => (v === null ? 0 : v)) : series,
@@ -210,12 +228,12 @@ function pivotFuelComparison(rows, usRows, cat, startDate, endDate, asPct, smoot
       ...(stacked ? { stack: "mix" } : {}),
     });
   }
-  const overlay = us48OverlayDataset(usRows, dates, startDate, endDate, rec => {
+  const overlay = us48OverlayDataset(usRows, allDates, runUpStart, endDate, rec => {
     const v = rec.byCat[cat] || 0;
     return asPct ? (rec.total > 0 ? (v / rec.total) * 100 : 0) : v / 1000;
   });
   if (overlay) {
-    if (smooth) overlay.data = movingAverage(overlay.data, 7);
+    overlay.data = trim(smooth ? movingAverage(overlay.data, SMOOTH_WINDOW) : overlay.data);
     datasets.push(overlay);
   }
   return { dates, datasets };
@@ -260,7 +278,15 @@ function fmt(v) {
   return v >= 100 ? Math.round(v).toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 
-function stackedAreaConfig(dates, datasets, yLabel, asPct) {
+// Every chart labels the day it is hovering. When a transform sits between
+// the stored day and the plotted point - today only the 7-day average - the
+// tooltip has to say so, or the same date reads as two different numbers here
+// and on the snapshot and looks like a data bug. `note` is that qualifier.
+function tooltipTitle(note) {
+  return note ? (items) => `${items[0].label} - ${note}` : undefined;
+}
+
+function stackedAreaConfig(dates, datasets, yLabel, asPct, note) {
   const useBars = dates.length <= BAR_CHART_MAX_DAYS;
   const unit = asPct ? "%" : " GWh";
   return {
@@ -285,6 +311,7 @@ function stackedAreaConfig(dates, datasets, yLabel, asPct) {
         legend: { display: false }, // replaced by the checkbox legend (buildLegend)
         tooltip: {
           callbacks: {
+            title: tooltipTitle(note),
             label: (ctx) => `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}${unit}`,
             footer: asPct ? undefined : (items) => {
               const total = items
@@ -301,13 +328,13 @@ function stackedAreaConfig(dates, datasets, yLabel, asPct) {
 
 // Picks the config for a view whose datasets can be drawn either way. Call
 // it with datasets already passed through applyChartType.
-function mixChartConfig(dates, datasets, yLabel, asPct, chartType) {
+function mixChartConfig(dates, datasets, yLabel, asPct, chartType, note) {
   return chartType === "lines"
-    ? multiLineConfig(dates, datasets, yLabel, asPct)
-    : stackedAreaConfig(dates, datasets, yLabel, asPct);
+    ? multiLineConfig(dates, datasets, yLabel, asPct, note)
+    : stackedAreaConfig(dates, datasets, yLabel, asPct, note);
 }
 
-function multiLineConfig(dates, datasets, yLabel, asPct) {
+function multiLineConfig(dates, datasets, yLabel, asPct, note) {
   const unit = asPct ? "%" : " GWh";
   return {
     type: "line",
@@ -330,7 +357,10 @@ function multiLineConfig(dates, datasets, yLabel, asPct) {
         legend: { display: false }, // replaced by the checkbox legend (buildLegend)
         tooltip: {
           itemSort: (a, b) => b.parsed.y - a.parsed.y,
-          callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}${unit}` },
+          callbacks: {
+            title: tooltipTitle(note),
+            label: (ctx) => `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}${unit}`,
+          },
         },
       },
     },
@@ -354,6 +384,21 @@ const RANGE_PRESETS = [
 function addDays(isoDate, n) {
   const d = new Date(isoDate + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Calendar months, not 30-day blocks: "vs last month" means the same day of
+// the month to anyone reading a mix, and a 30-day step drifts off it. Clamped
+// to the target month's length, so 31 March back one month is 28 February
+// rather than rolling forward into March again the way a naive setUTCMonth
+// would.
+function addMonths(isoDate, n) {
+  const d = new Date(isoDate + "T00:00:00Z");
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + n);
+  const lastOfMonth = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, lastOfMonth));
   return d.toISOString().slice(0, 10);
 }
 
@@ -451,9 +496,11 @@ function renderNational(rows, usRows, start, end, asPct, chartType) {
 function renderFuel(rows, usRows, cat, start, end, asPct, smooth, chartType) {
   const { dates, datasets } = pivotFuelComparison(rows, usRows, cat, start, end, asPct, smooth, chartType === "stacked");
   if (fuelChart) fuelChart.destroy();
-  const yLabel = asPct ? `% of each area's daily total` : `GWh / day of ${LABELS[cat]}`;
+  const smoothing = smooth ? ` (${SMOOTH_WINDOW}-day avg)` : "";
+  const yLabel = (asPct ? `% of each area's daily total` : `GWh / day of ${LABELS[cat]}`) + smoothing;
+  const note = smooth ? `${SMOOTH_WINDOW}-day trailing average` : "";
   fuelChart = new Chart(document.getElementById("fuel-chart"),
-    mixChartConfig(dates, applyChartType(datasets, chartType), yLabel, asPct, chartType));
+    mixChartConfig(dates, applyChartType(datasets, chartType), yLabel, asPct, chartType, note));
   buildLegend("fuel", fuelChart);
 }
 
@@ -482,10 +529,17 @@ function fmtEnergy(mwh) {
   return `${gwh.toLocaleString(undefined, { maximumFractionDigits: 1 })} GWh`;
 }
 
-// Day-over-day change cell. `prev` undefined means the comparison day has no
-// data at all for this area - render an empty cell rather than a fabricated
-// swing against zero. A fuel missing from a day that DID report is a genuine
-// zero, and the callers pass 0 for it.
+// Change cell. `prev` undefined means there is nothing to compare against -
+// either the comparison day is missing for this area entirely, or it reported
+// but carried no row for this fuel. Both render empty rather than as a
+// fabricated swing against zero.
+//
+// The second case is the one worth stating: an absent row and a zero row mean
+// different things and the data keeps them apart. PJM stores an explicit 0 for
+// battery through 2016 because PJM measured zero; ERCOT stores no battery row
+// at all before EIA fills it, because ERCOT's settlement workbook has no such
+// column. Reading the absence as zero turned the second case into a +23 GWh
+// day-over-day swing that never happened.
 function deltaCell(now, prev, prevLabel) {
   if (prev === undefined || prev === null || !Number.isFinite(prev)) {
     return `<span class="value delta"></span>`;
@@ -502,15 +556,58 @@ function deltaCell(now, prev, prevLabel) {
   return `<span class="value delta ${cls}" title="vs ${prevLabel}${pct}">${sign}${fmtEnergy(Math.abs(d))}</span>`;
 }
 
+// The periods a snapshot can be compared against. Day-over-day answers "what
+// moved overnight"; the longer ones answer "is this a normal August" - a
+// single hot day reads as a spike against yesterday and as nothing at all
+// against last year. All four at once is a lot of columns, so the selector
+// defaults to one and `all` is opt-in.
+const SNAPSHOT_PERIODS = [
+  { key: "1D", label: "1D", shift: (d) => addDays(d, -1) },
+  { key: "1W", label: "1W", shift: (d) => addDays(d, -7) },
+  { key: "1M", label: "1M", shift: (d) => addMonths(d, -1) },
+  { key: "1Y", label: "1Y", shift: (d) => addMonths(d, -12) },
+];
+
+function selectedPeriods(value) {
+  return value === "all" ? SNAPSHOT_PERIODS : SNAPSHOT_PERIODS.filter(p => p.key === value);
+}
+
+// Resolves each selected period against one area's as-of date into the
+// {label, date, mix} shape renderBarRows wants. `mixes` is keyed `iso|date`.
+function comparisonsFor(iso, asOf, periods, mixes) {
+  return periods.map(p => {
+    const date = p.shift(asOf);
+    return { label: p.label, date, mix: mixes[`${iso}|${date}`] };
+  });
+}
+
 // Bars are sized by share of the day's total; the number that matters to a
 // gas trader is the volume, so that leads and the share follows it.
 //
-// `prev` is an optional {fuel_category -> MWh} map for the day before, which
-// adds a change column. It is derived client-side from the same per-year rows
-// the charts use, so it can never disagree with them.
-function renderBarRows(container, mix, totalOverride, prev, prevLabel) {
+// `comparisons` is a list of {label, date, mix} - each adds a change column,
+// where `mix` is a {fuel_category -> MWh} map for that comparison day or
+// undefined if the area has no data for it. They are derived client-side from
+// the same per-year rows the charts use, so they can never disagree.
+function renderBarRows(container, mix, comparisons = []) {
   container.innerHTML = "";
-  const total = totalOverride ?? mix.reduce((s, m) => s + m.generation_mwh, 0);
+  const total = mix.reduce((s, m) => s + m.generation_mwh, 0);
+  const deltas = (value, pick) =>
+    comparisons.map(c => deltaCell(value, c.mix ? pick(c.mix) : undefined, c.date)).join("");
+
+  // One column is self-explanatory from its tooltip; several are not.
+  if (comparisons.length > 1) {
+    const head = document.createElement("div");
+    head.className = "bar-row head-row";
+    head.innerHTML = `
+      <span class="label"></span>
+      <span class="bar-track"></span>
+      <span class="value">Output</span>
+      <span class="value pct">Share</span>
+      ${comparisons.map(c => `<span class="value delta" title="vs ${c.date}">${c.label}</span>`).join("")}
+    `;
+    container.appendChild(head);
+  }
+
   const sorted = [...mix].sort((a, b) => b.generation_mwh - a.generation_mwh);
   for (const m of sorted) {
     const pct = total > 0 ? (m.generation_mwh / total) * 100 : 0;
@@ -521,19 +618,18 @@ function renderBarRows(container, mix, totalOverride, prev, prevLabel) {
       <span class="bar-track"><span class="bar-fill" style="width:${Math.max(pct, 0)}%;background:${colorFor(m.fuel_category)}"></span></span>
       <span class="value">${fmtEnergy(m.generation_mwh)}</span>
       <span class="value pct">${pct.toFixed(1)}%</span>
-      ${prev ? deltaCell(m.generation_mwh, prev[m.fuel_category] ?? 0, prevLabel) : ""}
+      ${deltas(m.generation_mwh, prev => prev[m.fuel_category])}
     `;
     container.appendChild(row);
   }
   const totalRow = document.createElement("div");
   totalRow.className = "bar-row total-row";
-  const prevTotal = prev ? Object.values(prev).reduce((s, v) => s + v, 0) : undefined;
   totalRow.innerHTML = `
     <span class="label">Total</span>
     <span class="bar-track"></span>
     <span class="value">${fmtEnergy(total)}</span>
     <span class="value pct">100%</span>
-    ${prev ? deltaCell(total, prevTotal, prevLabel) : ""}
+    ${deltas(total, prev => Object.values(prev).reduce((s, v) => s + v, 0))}
   `;
   container.appendChild(totalRow);
 }
@@ -561,44 +657,42 @@ function mixesFor(rows, wanted) {
 // It runs on its own clock: EIA publishes later than the ISOs do, so its
 // latest day is often a day behind theirs. The heading states which day it
 // is instead of implying it lines up with the ISO snapshot.
-function renderSnapshotUs48(usRows) {
+function renderSnapshotUs48(usRows, periods) {
   const heading = document.getElementById("snapshot-us48-heading");
   const note = document.getElementById("snapshot-us48-note");
   const bars = document.getElementById("snapshot-us48-bars");
   if (usRows.length === 0) return;
 
   const latest = usRows.reduce((m, r) => (r.date > m ? r.date : m), "0000-00-00");
-  const prevDate = addDays(latest, -1);
-  const byDate = { [latest]: {}, [prevDate]: {} };
-  for (const r of usRows) {
-    if (r.date === latest || r.date === prevDate) {
-      byDate[r.date][r.cat] = (byDate[r.date][r.cat] || 0) + r.mwh;
-    }
-  }
-  const mix = Object.entries(byDate[latest]).map(([fuel_category, generation_mwh]) => ({
+  const wanted = new Set([`US48|${latest}`, ...periods.map(p => `US48|${p.shift(latest)}`)]);
+  const mixes = mixesFor(usRows, wanted);
+  const today = mixes[`US48|${latest}`];
+  if (!today) return;
+  const mix = Object.entries(today).map(([fuel_category, generation_mwh]) => ({
     fuel_category,
     generation_mwh,
   }));
-  if (mix.length === 0) return;
-  const havePrev = Object.keys(byDate[prevDate]).length > 0;
 
   heading.hidden = false;
   note.hidden = false;
   bars.hidden = false;
   note.textContent =
-    `EIA-930's measurement of the entire U.S. lower 48 for ${latest}` +
-    (havePrev ? `, with the change against ${prevDate}.` : ".") +
+    `EIA-930's measurement of the entire U.S. lower 48 for ${latest}.` +
     " EIA publishes on its own schedule, so this day can differ from the per-ISO days below.";
-  renderBarRows(bars, mix, undefined, havePrev ? byDate[prevDate] : undefined, prevDate);
+  renderBarRows(bars, mix, comparisonsFor("US48", latest, periods, mixes));
 }
 
-function renderSnapshotNationalBars(mix, prev, prevLabel) {
-  renderBarRows(document.getElementById("snapshot-national-bars"), mix, undefined, prev, prevLabel);
+function renderSnapshotNationalBars(mix, comparisons) {
+  renderBarRows(document.getElementById("snapshot-national-bars"), mix, comparisons);
 }
 
-function renderSnapshotGrid(byIso, prevMixes) {
+function renderSnapshotGrid(byIso, periods, prevMixes) {
   const grid = document.getElementById("snapshot-grid");
   grid.innerHTML = "";
+  // Four change columns no longer fit beside a readable bar at the default
+  // card width, so the grid widens with the number of columns instead of
+  // crushing the track.
+  grid.classList.toggle("wide", periods.length > 1);
   for (const iso of Object.keys(byIso).sort()) {
     const { as_of, mix, preliminary } = byIso[iso];
     const card = document.createElement("div");
@@ -608,8 +702,7 @@ function renderSnapshotGrid(byIso, prevMixes) {
     const barsContainer = document.createElement("div");
     card.appendChild(barsContainer);
     grid.appendChild(card);
-    const prevDate = addDays(as_of, -1);
-    renderBarRows(barsContainer, mix, undefined, prevMixes[`${iso}|${prevDate}`], prevDate);
+    renderBarRows(barsContainer, mix, comparisonsFor(iso, as_of, periods, prevMixes));
   }
 }
 
@@ -715,11 +808,12 @@ async function main() {
   const fPct = document.getElementById("fuel-pct");
   const fType = document.getElementById("fuel-type");
   initDateInputs(fStart, fEnd, range);
-  const storageNote = document.getElementById("fuel-storage-note");
+  const batteryNote = document.getElementById("fuel-battery-note");
   const refreshFuel = () => {
-    // Storage is the one bucket whose definition needs saying out loud - a
-    // line that never dips below zero looks like missing data otherwise.
-    storageNote.hidden = fuelSelect.value !== "storage";
+    // Battery is the one bucket whose definition needs saying out loud - a
+    // line that never dips below zero looks like missing data otherwise, and
+    // the national reference line is not an upper bound for it.
+    batteryNote.hidden = fuelSelect.value !== "battery";
     // Shares of each ISO's own total can't be stacked - seven such shares
     // sum to whatever they like, not to 100.
     const stacked = fType.value === "stacked";
@@ -754,36 +848,49 @@ async function main() {
   setupRangePresets("iso-presets", iStart, iEnd, refreshIso, range, "1Y");
   refreshIso();
 
-  // Latest snapshot
-  // Day-over-day change for the snapshot. Each ISO card compares against the
-  // day before ITS OWN as_of, since the ISOs publish on different delays.
+  // Latest snapshot.
+  // Each ISO card compares against its OWN as_of shifted back, since the ISOs
+  // publish on different delays - comparing them all against one calendar
+  // date would put a fresh ISO against a stale one.
   //
-  // The national rollup sums each ISO's own latest day, so its comparison has
-  // to sum each ISO's own previous day the same way. If any one ISO is
-  // missing that day, the national change is left blank: a partial sum
-  // against a full one would read as a national drop that never happened.
+  // Every period for every ISO is collected in a single pass here, so
+  // changing the selector re-renders from memory instead of re-walking twenty
+  // years of rows.
   const isoAsOf = Object.entries(snapshot.by_iso).map(([iso, s]) => [iso, s.as_of]);
-  const wantedPrev = new Set(isoAsOf.map(([iso, asOf]) => `${iso}|${addDays(asOf, -1)}`));
+  const wantedPrev = new Set();
+  for (const [iso, asOf] of isoAsOf) {
+    for (const p of SNAPSHOT_PERIODS) wantedPrev.add(`${iso}|${p.shift(asOf)}`);
+  }
   const prevMixes = mixesFor(rows, wantedPrev);
 
-  const prevNational = {};
-  let nationalComparable = isoAsOf.length > 0;
-  for (const [iso, asOf] of isoAsOf) {
-    const prev = prevMixes[`${iso}|${addDays(asOf, -1)}`];
-    if (!prev) { nationalComparable = false; break; }
-    for (const [cat, mwh] of Object.entries(prev)) {
-      prevNational[cat] = (prevNational[cat] || 0) + mwh;
+  // The national rollup sums each ISO's own latest day, so its comparison has
+  // to sum each ISO's own shifted day the same way. If any one ISO is missing
+  // that day, that period is left blank: a partial sum against a full one
+  // would read as a national drop that never happened.
+  const nationalComparison = (period) => {
+    const summed = {};
+    for (const [iso, asOf] of isoAsOf) {
+      const prev = prevMixes[`${iso}|${period.shift(asOf)}`];
+      if (!prev) return { label: period.label, date: period.shift(isoAsOf[0][1]), mix: undefined };
+      for (const [cat, mwh] of Object.entries(prev)) summed[cat] = (summed[cat] || 0) + mwh;
     }
-  }
-  const nationalPrevLabel = "the previous day for every ISO";
+    return {
+      label: period.label,
+      date: `${period.shift(isoAsOf[0][1])} (each ISO shifted by its own as-of)`,
+      mix: isoAsOf.length > 0 ? summed : undefined,
+    };
+  };
 
-  renderSnapshotUs48(usRows);
-  renderSnapshotNationalBars(
-    snapshot.national,
-    nationalComparable ? prevNational : undefined,
-    nationalPrevLabel
-  );
-  renderSnapshotGrid(snapshot.by_iso, prevMixes);
+  const periodSelect = document.getElementById("snapshot-period");
+  const refreshSnapshot = () => {
+    const periods = selectedPeriods(periodSelect.value);
+    renderSnapshotUs48(usRows, periods);
+    renderSnapshotNationalBars(snapshot.national, periods.map(nationalComparison));
+    renderSnapshotGrid(snapshot.by_iso, periods, prevMixes);
+  };
+  periodSelect.addEventListener("change", refreshSnapshot);
+  refreshSnapshot();
+
   renderHealthTable(meta.iso_stats, gaps);
   const gapsNote = document.getElementById("gaps-note");
   if (gaps && gaps.summary && Object.keys(gaps.summary).length > 0) {

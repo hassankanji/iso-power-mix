@@ -36,6 +36,11 @@ ISO = "ISONE"
 # boundary rather than assuming data loss.
 EARLIEST_DATE = date(2018, 6, 30)
 REQUIRES_AUTH = True
+# ISO-NE's fuel-mix feed carries no storage series, but EIA's ISNE
+# respondent does (~8 GWh/day of BAT+PS in mid-2026). The pipeline fills
+# only the battery bucket from it - ISNE's pumped storage is already inside
+# this feed's hydro, so taking EIA's PS as well would double count.
+EIA_BACKED_CATEGORIES = ("battery",)
 # Pipeline pre-checks these and reports "skipped_no_credentials" instead of
 # attempting a fetch that would just 401.
 REQUIRED_ENV = ["ISONE_USERNAME", "ISONE_PASSWORD"]
