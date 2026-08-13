@@ -64,9 +64,23 @@ EXPECTED = {
 }
 
 
-def verdict_for(iso: str, fuel: str | None, ratio: float) -> str:
+def verdict_for(iso: str, fuel: str | None, ratio: float, ours: float, theirs: float) -> str:
+    """One place decides, so the one-sided and both-sided paths cannot drift.
+
+    Order matters. A documented difference is never a finding. Below
+    MIN_GWH_PER_DAY on both sides nothing is worth reading - NYISO stores an
+    explicit coal zero and EIA has no coal row for it at all, which is a
+    difference of nothing from nothing. And a ratio across a sign change is
+    not a ratio: EIA's imports_other goes negative when a region is a net
+    exporter, and dividing by it produced "-5.807, INVESTIGATE" for what is
+    just an interchange convention.
+    """
     if (iso, fuel) in EXPECTED:
         return "expected"
+    if max(abs(ours), abs(theirs)) < MIN_GWH_PER_DAY:
+        return "too small to judge"
+    if ours < 0 or theirs < 0:
+        return "opposite signs - not a ratio"
     if 0.95 <= ratio <= 1.05:
         return "OK"
     return "check" if 0.85 <= ratio <= 1.15 else "INVESTIGATE"
@@ -129,7 +143,7 @@ def main() -> None:
             print(f"{iso:6} no overlapping days")
             continue
         ours_avg, eia_avg, ratio, n_days = totals
-        verdict = verdict_for(iso, None, ratio)
+        verdict = verdict_for(iso, None, ratio, ours_avg, eia_avg)
         note = EXPECTED.get((iso, None), "")
         print(f"{iso:6} {'(total)':>18} {ours_avg:9.0f} {eia_avg:9.0f} {ratio:7.3f}  {verdict}"
               + (f"  - {note}" if note else ""))
@@ -166,10 +180,15 @@ def main() -> None:
             pair = compare(ours_by_fuel.get(fuel, {}), eia_by_fuel.get(fuel, {}))
             f_note = EXPECTED.get((iso, fuel), "")
             if pair is None:
+                # One side has the bucket and the other does not - a
+                # definition mismatch, which never shows up as a ratio
+                # because there is nothing to divide.
                 side = "ours only" if fuel in ours_by_fuel else "EIA only"
                 mine = sum(ours_by_fuel.get(fuel, {}).values()) / max(n_days, 1) / 1000
                 eias = sum(eia_by_fuel.get(fuel, {}).values()) / max(n_days, 1) / 1000
-                f_verdict = "expected" if (iso, fuel) in EXPECTED else "one-sided"
+                f_verdict = verdict_for(iso, fuel, float("nan"), mine, eias)
+                if f_verdict not in ("expected", "too small to judge"):
+                    f_verdict = "one-sided"
                 print(f"{'':6} {fuel:>18} {mine:9.1f} {eias:9.1f} {'-':>7}  {f_verdict} ({side})"
                       + (f"  - {f_note}" if f_note else ""))
                 entry["fuels"][fuel] = {
@@ -180,10 +199,7 @@ def main() -> None:
                 }
                 continue
             f_ours, f_eia, f_ratio, f_days = pair
-            if max(f_ours, f_eia) < MIN_GWH_PER_DAY:
-                f_verdict = "too small to judge"
-            else:
-                f_verdict = verdict_for(iso, fuel, f_ratio)
+            f_verdict = verdict_for(iso, fuel, f_ratio, f_ours, f_eia)
             print(f"{'':6} {fuel:>18} {f_ours:9.1f} {f_eia:9.1f} {f_ratio:7.3f}  {f_verdict}"
                   + (f"  - {f_note}" if f_note else ""))
             entry["fuels"][fuel] = {
