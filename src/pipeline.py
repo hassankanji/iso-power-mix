@@ -251,7 +251,7 @@ def fill_eia_backed_buckets(conn, targets: list[str], end_date: dt.date) -> None
             if not missing:
                 continue
             print(f"[{iso}] {len(missing)} day(s) from {missing[0]} have no {category} row - asking EIA")
-            written, returned = 0, []
+            written, returned, complete = 0, [], True
             # Chunked by year: one faceted hourly call per chunk is cheap, and
             # the first-ever pass has eight years of history to cover.
             for c_start, c_end in dates_to_ranges(missing):
@@ -260,6 +260,7 @@ def fill_eia_backed_buckets(conn, targets: list[str], end_date: dt.date) -> None
                         df = eia.fetch_battery_daily(iso, w_start, w_end)
                     except Exception as e:
                         print(f"[{iso}] {category} fill {w_start}..{w_end} failed ({e}) - will retry next run")
+                        complete = False
                         continue
                     if df.empty:
                         continue
@@ -272,10 +273,14 @@ def fill_eia_backed_buckets(conn, targets: list[str], end_date: dt.date) -> None
             if written:
                 print(f"[{iso}] EIA supplied {written} {category} row(s)")
                 log_ingestion(conn, iso, end_date, "eia_bucket_fill", written, f"{category} from EIA-930")
-            # Only lower the floor on a pass that actually got an answer - an
-            # outage must not be mistaken for "EIA has nothing before here".
-            if returned and missing[0] < min(returned):
+            # Lower the floor only after a pass where every chunk got an
+            # answer. "EIA returned nothing older than X" is only evidence
+            # that nothing older exists if we actually asked for all of it -
+            # one timeout on the oldest chunk would otherwise write off those
+            # years permanently.
+            if complete and returned and missing[0] < min(returned):
                 floors.setdefault(iso, {})[category] = min(returned).isoformat()
+                print(f"[{iso}] EIA has no {category} before {min(returned)} - not asking again")
 
     save_bucket_fill_floors(floors)
 
