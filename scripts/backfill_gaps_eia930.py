@@ -16,9 +16,9 @@ Caveats, also documented in the README:
     imports_other; pumped storage may be inside hydro depending on the BA's
     reporting), so a filled day's mix is slightly bucketed differently than
     neighbors.
-  - The bulk file's storage column is hourly net generation, so it goes
+  - The bulk file's battery column is hourly net generation, so it goes
     negative while charging. That needs no special handling here: these rows
-    go through wide_to_daily_mwh, which clips storage per hour before the
+    go through wide_to_daily_mwh, which clips battery per hour before the
     daily mean, giving the discharge-only figure the rest of the dataset
     uses (see src/schema.py).
   - Values are BA-level net generation and may differ a few percent from
@@ -81,8 +81,12 @@ def _canon_fuel(eia_fuel: str) -> str:
         return "solar"
     if "wind" in key:
         return "wind"
-    if "battery" in key or ("storage" in key and "hydro" not in key):
-        return "storage"
+    # The hydro check above already claimed "Hydropower and Pumped Storage",
+    # which is what we want: pumped storage is hydro everywhere in this
+    # dataset (see src/schema.py). What reaches here is battery and other
+    # dedicated storage.
+    if "battery" in key or "storage" in key:
+        return "battery"
     if "geothermal" in key or "biomass" in key:
         return "other_renewables"
     return "imports_other"  # petroleum, other, unknown
