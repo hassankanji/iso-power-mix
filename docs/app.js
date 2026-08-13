@@ -95,7 +95,7 @@ function pivotNational(rows, usRows, startDate, endDate, asPct) {
 // Builds the dashed, unstacked US-lower-48 reference line dataset (or null
 // if there's nothing to draw). `valueFor` maps a US48 date-total map entry
 // to the plotted value, letting each view scale it appropriately.
-function us48OverlayDataset(usRows, dates, startDate, endDate, valueFor) {
+function us48OverlayDataset(usRows, dates, startDate, endDate, valueFor, label) {
   if (usRows.length === 0) return null;
   const usTotals = {};
   for (const r of usRows) {
@@ -106,7 +106,7 @@ function us48OverlayDataset(usRows, dates, startDate, endDate, valueFor) {
   }
   if (Object.keys(usTotals).length === 0) return null;
   return {
-    label: "US lower-48 total (EIA)",
+    label: label || "US lower-48 total (EIA)",
     data: dates.map(d => (d in usTotals ? valueFor(usTotals[d]) : null)),
     type: "line",
     borderColor: "#93a0b8",
@@ -228,10 +228,18 @@ function pivotFuelComparison(rows, usRows, cat, startDate, endDate, asPct, smoot
       ...(stacked ? { stack: "mix" } : {}),
     });
   }
+  // Naming the gap in the series' own label is the difference between a
+  // reader seeing a contradiction and seeing a caveat. For every other fuel
+  // the national line sits above the ISO lines; for battery it runs at
+  // CAISO's level, because the three biggest fleets it would need are simply
+  // not in EIA's data. The legend and every tooltip now say which.
+  const overlayLabel = cat === "battery"
+    ? "US lower-48 (EIA, excl. CAISO/PJM/NYISO)"
+    : undefined;
   const overlay = us48OverlayDataset(usRows, allDates, runUpStart, endDate, rec => {
     const v = rec.byCat[cat] || 0;
     return asPct ? (rec.total > 0 ? (v / rec.total) * 100 : 0) : v / 1000;
-  });
+  }, overlayLabel);
   if (overlay) {
     overlay.data = trim(smooth ? movingAverage(overlay.data, SMOOTH_WINDOW) : overlay.data);
     datasets.push(overlay);
