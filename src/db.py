@@ -16,7 +16,7 @@ import pathlib
 import duckdb
 import pandas as pd
 
-from src.schema import CANONICAL_CATEGORIES, GENERATION_COLUMNS
+from src.schema import CANONICAL_CATEGORIES, GENERATION_COLUMNS, canonical_category
 
 DB_PATH = pathlib.Path(__file__).resolve().parent.parent / "data" / "power_mix.duckdb"
 EXPORT_DIR = pathlib.Path(__file__).resolve().parent.parent / "docs" / "data"
@@ -50,41 +50,40 @@ def connect() -> duckdb.DuckDBPyConnection:
     return conn
 
 
-def _enforce_storage_floor(df: pd.DataFrame, source: str) -> pd.DataFrame:
-    """Last-resort guard on the storage-is-discharge invariant (src/schema.py).
+def _drop_negative_battery(df: pd.DataFrame, source: str) -> pd.DataFrame:
+    """Last-resort guard on the battery-is-discharge invariant (src/schema.py).
 
-    Producers clip storage on the source's native interval, which is the only
-    place the true discharge figure is recoverable. This does NOT replace
-    that - clamping a daily *net* to zero throws away a real discharge number
-    and reports it as nothing. It exists because a negative daily storage
-    total is, by definition, net-convention data that leaked past a producer,
-    and a negative slice silently breaks every stacked chart and share
-    calculation downstream.
+    Producers clip battery output on the source's native interval, which is
+    the only place the true discharge figure is recoverable. This does NOT
+    replace that. It exists because a negative daily battery total is, by
+    definition, net-convention data that leaked past a producer, and a
+    negative slice silently breaks every stacked chart and share calculation
+    downstream.
 
-    It fires on two known populations, both bounded and both shrinking:
-      - rows written before the convention changed (39 ISO-days at the time
-        of the change: 34 ERCOT, 5 MISO), which no re-pull could re-derive
-        because ERCOT's settlement workbook had not yet covered those days
-        and MISO's own feed has permanent holes there. ERCOT's self-heal into
-        real discharge as settlement data lands inside its 45-day lookback.
-      - any future source that starts reporting net without us noticing.
+    It DROPS the row rather than clamping it to zero. Clamping was the
+    original behaviour and it was worse than the disease: a zero is a
+    measurement, so 34 ERCOT days of leaked net data became 34 days of
+    "the batteries did nothing", which no later pass would ever revisit
+    because the date no longer looked missing. That is what put a cliff in
+    ERCOT's battery line - flat zero for its whole history, then 25 GWh/day
+    the moment the clipping fix shipped. An absent row is honest, reads as a
+    gap on the chart, and stays eligible for the EIA bucket fill.
 
-    So it prints loudly rather than fixing things quietly. A warning here on
-    freshly pulled data means a producer needs fixing, not that this guard is
-    doing its job.
+    A warning here on freshly pulled data means a producer needs fixing, not
+    that this guard is doing its job.
     """
-    negative = (df["fuel_category"] == "storage") & (df["generation_mwh"] < 0)
+    negative = (df["fuel_category"] == "battery") & (df["generation_mwh"] < 0)
     n = int(negative.sum())
     if n:
         worst = df.loc[negative, "generation_mwh"].min()
         isos = sorted(df.loc[negative, "iso"].unique())
         print(
-            f"storage floor ({source}): clamped {n} negative storage row(s) to 0 "
-            f"for {', '.join(isos)} (largest {worst:,.0f} MWh). Storage is discharge-only - "
-            f"see src/schema.py. If this fires on a fresh pull, that connector is not clipping."
+            f"battery floor ({source}): dropped {n} negative battery row(s) "
+            f"for {', '.join(isos)} (largest {worst:,.0f} MWh). Battery output is "
+            f"discharge-only - see src/schema.py. If this fires on a fresh pull, "
+            f"that connector is not clipping."
         )
-        df = df.copy()
-        df.loc[negative, "generation_mwh"] = 0.0
+        df = df.loc[~negative]
     return df
 
 
@@ -98,7 +97,9 @@ def _rebuild_from_exports(conn: duckdb.DuckDBPyConnection) -> None:
     for path in year_files:
         with open(path) as f:
             payload = json.load(f)
-        cats = payload.get("fuel_categories", CANONICAL_CATEGORIES)
+        # canonical_category maps the pre-rename `storage` bucket onto
+        # `battery`, so a year file written before the rename still loads.
+        cats = [canonical_category(c) for c in payload.get("fuel_categories", CANONICAL_CATEGORIES)]
         rows = [
             (r[0], r[1], cats[r[2]], r[3])
             for r in payload.get("rows", [])
@@ -110,7 +111,7 @@ def _rebuild_from_exports(conn: duckdb.DuckDBPyConnection) -> None:
         return
     df = pd.concat(frames, ignore_index=True)
     df["date"] = pd.to_datetime(df["date"]).dt.date
-    df = _enforce_storage_floor(df, "rebuild from committed exports")
+    df = _drop_negative_battery(df, "rebuild from committed exports")
     conn.register("_rebuild", df)
     try:
         conn.execute("INSERT INTO generation SELECT date, iso, fuel_category, generation_mwh FROM _rebuild")
@@ -135,7 +136,7 @@ def upsert_generation(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame) -> int:
         print(f"upsert_generation: dropped {dropped} row(s) with no valid generation_mwh reading")
     if df.empty:
         return 0
-    df = _enforce_storage_floor(df, "upsert")
+    df = _drop_negative_battery(df, "upsert")
 
     conn.register("_incoming", df)
     try:

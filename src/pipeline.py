@@ -34,12 +34,14 @@ import requests
 
 from src import eia
 from src.connectors import CONNECTORS
+from src.connectors.base import chunk_date_range
 from src.db import connect, latest_date_for_iso, log_ingestion, upsert_generation
 from src.gaps import (
     MAX_ATTEMPTS,
     dates_to_ranges,
     find_missing_dates,
     load_state,
+    patch_state,
     save_state,
 )
 
@@ -141,6 +143,7 @@ def run_all(
     # --start/--end run already IS a manual repair of that window.
     if start_override is None and end_override is None:
         repair_gaps(conn, targets, results)
+        fill_eia_backed_buckets(conn, targets, end_date)
         update_us48_reference(conn, end_date, us48_start)
     elif us48_start is not None:
         # ...but an explicit US48 rebuild is worth honouring on any run, so a
@@ -192,6 +195,101 @@ def update_us48_reference(conn, end_date: dt.date, start_override: dt.date | Non
         # Never let the reference overlay fail the run.
         log_ingestion(conn, "US48", end_date, "failed", 0, str(e))
         print(f"[US48] reference update failed ({e}) - continuing")
+
+
+def fill_eia_backed_buckets(conn, targets: list[str], end_date: dt.date) -> None:
+    """Fill buckets an ISO's own feed structurally cannot report.
+
+    This is NOT the day-level gap fill above, and the distinction matters.
+    That one asks "does this ISO have a day at all"; this one asks "does this
+    ISO's day have a bucket its source is incapable of producing". ERCOT's
+    settlement workbook has no storage column, SPP's and ISO-NE's feeds have
+    no storage series - so those days are not missing, they are permanently
+    short one fuel, and nothing that looks for missing DATES will ever come
+    back for them. Left alone the bucket reads as a flat zero, which is a
+    measurement claim we cannot support.
+
+    Only the categories a connector declares in EIA_BACKED_CATEGORIES are
+    touched, and only on dates where the ISO produced no row for them, so the
+    ISO's own number always wins where it exists. ERCOT is the case that
+    proves this matters: its live dashboard does report battery output for the
+    freshest day or two, and that value stays.
+    """
+    if not eia.has_key():
+        return
+    state = load_state()
+    floors: dict = state.setdefault("bucket_fill_floor", {})
+
+    for iso in targets:
+        connector = CONNECTORS[iso]
+        categories = getattr(connector, "EIA_BACKED_CATEGORIES", ())
+        if not categories or iso not in eia.RESPONDENTS:
+            continue
+        for category in categories:
+            # A respondent's battery series starts when EIA began collecting
+            # it, years after 2018 for most. Once a pass has seen where that
+            # is, dates below it are not gaps to keep retrying - nothing will
+            # ever be there - so the floor is remembered and the daily run
+            # settles down to asking about recent days only.
+            floor = floors.get(iso, {}).get(category)
+            earliest = max(eia.EIA_EARLIEST, dt.date.fromisoformat(floor)) if floor else eia.EIA_EARLIEST
+            missing = [
+                r[0]
+                for r in conn.execute(
+                    """
+                    SELECT DISTINCT g.date FROM generation g
+                    WHERE g.iso = ? AND g.date >= ?
+                      AND NOT EXISTS (
+                        SELECT 1 FROM generation b
+                        WHERE b.iso = g.iso AND b.date = g.date AND b.fuel_category = ?
+                      )
+                    ORDER BY g.date
+                    """,
+                    [iso, earliest, category],
+                ).fetchall()
+            ]
+            if not missing:
+                continue
+            print(f"[{iso}] {len(missing)} day(s) from {missing[0]} have no {category} row - asking EIA")
+            written, returned, complete = 0, [], True
+            # Chunked by year: one faceted hourly call per chunk is cheap, and
+            # the first-ever pass has eight years of history to cover.
+            for c_start, c_end in dates_to_ranges(missing):
+                for w_start, w_end in chunk_date_range(c_start, min(c_end, end_date), 365):
+                    try:
+                        df = eia.fetch_battery_daily(iso, w_start, w_end)
+                    except Exception as e:
+                        print(f"[{iso}] {category} fill {w_start}..{w_end} failed ({e}) - will retry next run")
+                        complete = False
+                        continue
+                    if df.empty:
+                        continue
+                    returned.append(min(df["date"]))
+                    df = df[df["date"].isin(set(missing))]
+                    if df.empty:
+                        continue
+                    df["iso"] = iso
+                    written += upsert_generation(conn, df[["date", "iso", "fuel_category", "generation_mwh"]])
+            if written:
+                print(f"[{iso}] EIA supplied {written} {category} row(s)")
+                log_ingestion(conn, iso, end_date, "eia_bucket_fill", written, f"{category} from EIA-930")
+            # Lower the floor only after a pass where every chunk got an
+            # answer. "EIA returned nothing older than X" is only evidence
+            # that nothing older exists if we actually asked for all of it -
+            # one timeout on the oldest chunk would otherwise write off those
+            # years permanently.
+            if complete and returned and missing[0] < min(returned):
+                floors.setdefault(iso, {})[category] = min(returned).isoformat()
+                print(f"[{iso}] EIA has no {category} before {min(returned)} - not asking again")
+
+    save_bucket_fill_floors(floors)
+
+
+def save_bucket_fill_floors(floors: dict) -> None:
+    def mutate(state):
+        state["bucket_fill_floor"] = floors
+
+    patch_state(mutate)
 
 
 def repair_gaps(conn, targets: list[str], results: dict[str, str]) -> None:

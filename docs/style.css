@@ -13,7 +13,7 @@
   --c-wind: #2ecc71;
   --c-solar: #f1c40f;
   --c-other_renewables: #16a085;
-  --c-storage: #e74c3c;
+  --c-battery: #e74c3c;
   --c-imports_other: #95a5a6;
 
   --iso-CAISO: #f1c40f;
@@ -191,6 +191,10 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
 
 .national-bars { max-width: 640px; }
 
+/* The head row only exists when several change columns are on - that is the
+   signal the panel needs the extra width. */
+.national-bars:has(.head-row) { max-width: 940px; }
+
 /* 380px, not 340: the snapshot rows carry a day-over-day change column, and
    the fixed columns (label + value + share + change) plus gaps need room
    before the bar track can claim its minimum width. */
@@ -199,6 +203,22 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
   grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
   gap: 16px;
 }
+
+/* Set when more than one change column is on: each costs 76px of fixed
+   width, which the 380px card does not have to give. */
+.snapshot-grid.wide {
+  grid-template-columns: repeat(auto-fill, minmax(620px, 1fr));
+}
+
+.bar-row.head-row {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+
+.bar-row.head-row .value { color: var(--muted); }
 
 .snapshot-card {
   background: var(--panel);

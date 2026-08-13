@@ -1,58 +1,479 @@
 {
  "window": {
-  "start": "2026-06-15",
-  "end": "2026-07-14"
+  "start": "2026-07-13",
+  "end": "2026-08-11"
  },
- "generated_at": "2026-07-16T22:27:26+00:00",
+ "generated_at": "2026-08-13T15:31:53+00:00",
  "isos": {
   "CAISO": {
    "days_compared": 30,
-   "ours_avg_gwh_per_day": 627.6,
-   "eia_avg_gwh_per_day": 497.5,
-   "ratio": 1.2616,
-   "verdict": "INVESTIGATE"
+   "ours_avg_gwh_per_day": 805.0,
+   "eia_avg_gwh_per_day": 671.6,
+   "ratio": 1.1986,
+   "verdict": "expected",
+   "fuels": {
+    "battery": {
+     "ours_avg_gwh_per_day": 45.94,
+     "eia_avg_gwh_per_day": 0.0,
+     "verdict": "expected",
+     "note": "EIA's CISO reports no battery series at all - ours is CAISO's own"
+    },
+    "coal": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 0.0,
+     "eia_avg_gwh_per_day": 0.0,
+     "ratio": NaN,
+     "verdict": "too small to judge"
+    },
+    "hydro": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 68.8,
+     "eia_avg_gwh_per_day": 68.8,
+     "ratio": 1.0,
+     "verdict": "OK"
+    },
+    "imports_other": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 35.54,
+     "eia_avg_gwh_per_day": -6.12,
+     "ratio": -5.8073,
+     "verdict": "opposite signs - not a ratio"
+    },
+    "natural_gas": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 271.9,
+     "eia_avg_gwh_per_day": 271.92,
+     "ratio": 0.9999,
+     "verdict": "OK"
+    },
+    "nuclear": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 54.37,
+     "eia_avg_gwh_per_day": 54.37,
+     "ratio": 1.0,
+     "verdict": "OK"
+    },
+    "other_renewables": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 27.31,
+     "eia_avg_gwh_per_day": 17.93,
+     "ratio": 1.5229,
+     "verdict": "INVESTIGATE"
+    },
+    "solar": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 217.28,
+     "eia_avg_gwh_per_day": 191.86,
+     "ratio": 1.1325,
+     "verdict": "check"
+    },
+    "wind": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 83.9,
+     "eia_avg_gwh_per_day": 72.87,
+     "ratio": 1.1513,
+     "verdict": "INVESTIGATE"
+    }
+   },
+   "note": "CAISO's feed includes imports; EIA net generation does not"
   },
   "PJM": {
    "days_compared": 30,
-   "ours_avg_gwh_per_day": 2740.5,
-   "eia_avg_gwh_per_day": 2741.1,
-   "ratio": 0.9998,
-   "verdict": "OK"
+   "ours_avg_gwh_per_day": 2801.2,
+   "eia_avg_gwh_per_day": 2801.2,
+   "ratio": 1.0,
+   "verdict": "OK",
+   "fuels": {
+    "battery": {
+     "ours_avg_gwh_per_day": 0.69,
+     "eia_avg_gwh_per_day": 0.0,
+     "verdict": "expected",
+     "note": "EIA's PJM reports no battery series at all - ours is PJM's own"
+    },
+    "coal": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 482.94,
+     "eia_avg_gwh_per_day": 482.94,
+     "ratio": 1.0,
+     "verdict": "OK"
+    },
+    "hydro": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 48.72,
+     "eia_avg_gwh_per_day": 48.72,
+     "ratio": 1.0,
+     "verdict": "OK"
+    },
+    "imports_other": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 80.62,
+     "eia_avg_gwh_per_day": 96.79,
+     "ratio": 0.8329,
+     "verdict": "INVESTIGATE"
+    },
+    "natural_gas": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 1240.6,
+     "eia_avg_gwh_per_day": 1240.6,
+     "ratio": 1.0,
+     "verdict": "OK"
+    },
+    "nuclear": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 781.89,
+     "eia_avg_gwh_per_day": 781.89,
+     "ratio": 1.0,
+     "verdict": "OK"
+    },
+    "other_renewables": {
+     "ours_avg_gwh_per_day": 15.48,
+     "eia_avg_gwh_per_day": 0.0,
+     "verdict": "one-sided"
+    },
+    "solar": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 107.2,
+     "eia_avg_gwh_per_day": 107.2,
+     "ratio": 1.0,
+     "verdict": "OK"
+    },
+    "wind": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 43.07,
+     "eia_avg_gwh_per_day": 43.07,
+     "ratio": 1.0,
+     "verdict": "OK"
+    }
+   }
   },
   "ERCOT": {
    "days_compared": 30,
-   "ours_avg_gwh_per_day": 1620.5,
-   "eia_avg_gwh_per_day": 1619.7,
-   "ratio": 1.0005,
-   "verdict": "OK"
+   "ours_avg_gwh_per_day": 1711.5,
+   "eia_avg_gwh_per_day": 1716.5,
+   "ratio": 0.9971,
+   "verdict": "OK",
+   "fuels": {
+    "battery": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 23.96,
+     "eia_avg_gwh_per_day": 23.9,
+     "ratio": 1.0022,
+     "verdict": "OK"
+    },
+    "coal": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 217.35,
+     "eia_avg_gwh_per_day": 217.52,
+     "ratio": 0.9992,
+     "verdict": "OK"
+    },
+    "hydro": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 1.62,
+     "eia_avg_gwh_per_day": 1.58,
+     "ratio": 1.03,
+     "verdict": "too small to judge"
+    },
+    "imports_other": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": -2.56,
+     "eia_avg_gwh_per_day": 1.92,
+     "ratio": -1.3306,
+     "verdict": "too small to judge"
+    },
+    "natural_gas": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 742.27,
+     "eia_avg_gwh_per_day": 741.52,
+     "ratio": 1.001,
+     "verdict": "OK"
+    },
+    "nuclear": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 119.0,
+     "eia_avg_gwh_per_day": 119.22,
+     "ratio": 0.9981,
+     "verdict": "OK"
+    },
+    "other_renewables": {
+     "ours_avg_gwh_per_day": 1.02,
+     "eia_avg_gwh_per_day": 0.0,
+     "verdict": "too small to judge"
+    },
+    "solar": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 312.79,
+     "eia_avg_gwh_per_day": 312.23,
+     "ratio": 1.0018,
+     "verdict": "OK"
+    },
+    "wind": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 296.04,
+     "eia_avg_gwh_per_day": 298.59,
+     "ratio": 0.9915,
+     "verdict": "OK"
+    }
+   }
   },
   "MISO": {
    "days_compared": 30,
-   "ours_avg_gwh_per_day": 2011.4,
-   "eia_avg_gwh_per_day": 2008.1,
-   "ratio": 1.0016,
-   "verdict": "OK"
+   "ours_avg_gwh_per_day": 2140.3,
+   "eia_avg_gwh_per_day": 2147.0,
+   "ratio": 0.9969,
+   "verdict": "OK",
+   "fuels": {
+    "battery": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 2.2,
+     "eia_avg_gwh_per_day": 1.7,
+     "ratio": 1.298,
+     "verdict": "too small to judge"
+    },
+    "coal": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 609.23,
+     "eia_avg_gwh_per_day": 610.07,
+     "ratio": 0.9986,
+     "verdict": "OK"
+    },
+    "hydro": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 27.92,
+     "eia_avg_gwh_per_day": 28.17,
+     "ratio": 0.9911,
+     "verdict": "expected",
+     "note": "MISO's no-auth feed folds hydro into Other"
+    },
+    "imports_other": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 10.49,
+     "eia_avg_gwh_per_day": 10.52,
+     "ratio": 0.9972,
+     "verdict": "OK"
+    },
+    "natural_gas": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 898.83,
+     "eia_avg_gwh_per_day": 900.46,
+     "ratio": 0.9982,
+     "verdict": "OK"
+    },
+    "nuclear": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 264.57,
+     "eia_avg_gwh_per_day": 265.28,
+     "ratio": 0.9973,
+     "verdict": "OK"
+    },
+    "solar": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 164.41,
+     "eia_avg_gwh_per_day": 166.0,
+     "ratio": 0.9904,
+     "verdict": "OK"
+    },
+    "wind": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 162.65,
+     "eia_avg_gwh_per_day": 164.76,
+     "ratio": 0.9872,
+     "verdict": "OK"
+    }
+   }
   },
   "SPP": {
    "days_compared": 30,
-   "ours_avg_gwh_per_day": 957.1,
-   "eia_avg_gwh_per_day": 957.0,
-   "ratio": 1.0001,
-   "verdict": "OK"
+   "ours_avg_gwh_per_day": 1065.4,
+   "eia_avg_gwh_per_day": 1061.8,
+   "ratio": 1.0033,
+   "verdict": "OK",
+   "fuels": {
+    "battery": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 0.9,
+     "eia_avg_gwh_per_day": 0.9,
+     "ratio": 1.0,
+     "verdict": "too small to judge"
+    },
+    "coal": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 307.06,
+     "eia_avg_gwh_per_day": 306.89,
+     "ratio": 1.0006,
+     "verdict": "OK"
+    },
+    "hydro": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 28.1,
+     "eia_avg_gwh_per_day": 27.84,
+     "ratio": 1.0093,
+     "verdict": "OK"
+    },
+    "imports_other": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 2.01,
+     "eia_avg_gwh_per_day": 2.0,
+     "ratio": 1.0032,
+     "verdict": "too small to judge"
+    },
+    "natural_gas": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 364.35,
+     "eia_avg_gwh_per_day": 362.38,
+     "ratio": 1.0054,
+     "verdict": "OK"
+    },
+    "nuclear": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 46.85,
+     "eia_avg_gwh_per_day": 46.85,
+     "ratio": 1.0001,
+     "verdict": "OK"
+    },
+    "other_renewables": {
+     "ours_avg_gwh_per_day": 0.26,
+     "eia_avg_gwh_per_day": 0.0,
+     "verdict": "too small to judge"
+    },
+    "solar": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 21.33,
+     "eia_avg_gwh_per_day": 21.21,
+     "ratio": 1.0055,
+     "verdict": "OK"
+    },
+    "wind": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 294.5,
+     "eia_avg_gwh_per_day": 293.77,
+     "ratio": 1.0025,
+     "verdict": "OK"
+    }
+   }
   },
   "NYISO": {
    "days_compared": 30,
-   "ours_avg_gwh_per_day": 405.1,
-   "eia_avg_gwh_per_day": 403.7,
-   "ratio": 1.0034,
-   "verdict": "OK"
+   "ours_avg_gwh_per_day": 420.8,
+   "eia_avg_gwh_per_day": 423.1,
+   "ratio": 0.9945,
+   "verdict": "OK",
+   "fuels": {
+    "coal": {
+     "ours_avg_gwh_per_day": 0.0,
+     "eia_avg_gwh_per_day": 0.0,
+     "verdict": "too small to judge"
+    },
+    "hydro": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 68.02,
+     "eia_avg_gwh_per_day": 68.46,
+     "ratio": 0.9936,
+     "verdict": "OK"
+    },
+    "imports_other": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 1.09,
+     "eia_avg_gwh_per_day": 9.03,
+     "ratio": 0.121,
+     "verdict": "INVESTIGATE"
+    },
+    "natural_gas": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 251.67,
+     "eia_avg_gwh_per_day": 254.8,
+     "ratio": 0.9877,
+     "verdict": "OK"
+    },
+    "nuclear": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 77.11,
+     "eia_avg_gwh_per_day": 77.25,
+     "ratio": 0.9981,
+     "verdict": "OK"
+    },
+    "other_renewables": {
+     "ours_avg_gwh_per_day": 9.12,
+     "eia_avg_gwh_per_day": 0.0,
+     "verdict": "one-sided"
+    },
+    "solar": {
+     "ours_avg_gwh_per_day": 0.0,
+     "eia_avg_gwh_per_day": 0.0,
+     "verdict": "too small to judge"
+    },
+    "wind": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 13.75,
+     "eia_avg_gwh_per_day": 13.53,
+     "ratio": 1.016,
+     "verdict": "OK"
+    }
+   }
   },
   "ISONE": {
    "days_compared": 30,
-   "ours_avg_gwh_per_day": 318.6,
-   "eia_avg_gwh_per_day": 342.8,
-   "ratio": 0.9293,
-   "verdict": "check"
+   "ours_avg_gwh_per_day": 334.4,
+   "eia_avg_gwh_per_day": 357.7,
+   "ratio": 0.9346,
+   "verdict": "expected",
+   "fuels": {
+    "battery": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 0.84,
+     "eia_avg_gwh_per_day": 0.84,
+     "ratio": 1.0,
+     "verdict": "too small to judge"
+    },
+    "hydro": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 15.05,
+     "eia_avg_gwh_per_day": 17.14,
+     "ratio": 0.878,
+     "verdict": "check"
+    },
+    "imports_other": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 1.71,
+     "eia_avg_gwh_per_day": 16.04,
+     "ratio": 0.1063,
+     "verdict": "INVESTIGATE"
+    },
+    "natural_gas": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 200.54,
+     "eia_avg_gwh_per_day": 214.82,
+     "ratio": 0.9335,
+     "verdict": "check"
+    },
+    "nuclear": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 78.14,
+     "eia_avg_gwh_per_day": 84.14,
+     "ratio": 0.9287,
+     "verdict": "check"
+    },
+    "other_renewables": {
+     "ours_avg_gwh_per_day": 14.39,
+     "eia_avg_gwh_per_day": 0.0,
+     "verdict": "one-sided"
+    },
+    "solar": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 7.49,
+     "eia_avg_gwh_per_day": 7.28,
+     "ratio": 1.0298,
+     "verdict": "OK"
+    },
+    "wind": {
+     "days_compared": 30,
+     "ours_avg_gwh_per_day": 16.21,
+     "eia_avg_gwh_per_day": 17.5,
+     "ratio": 0.9264,
+     "verdict": "check"
+    }
+   },
+   "note": "ISO-NE's feed excludes some behind-the-meter solar EIA counts"
   }
  }
 }

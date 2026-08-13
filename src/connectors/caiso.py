@@ -42,7 +42,7 @@ _CATEGORY_MAP_LOWER = {
     "natural gas": "natural_gas",
     "nuclear": "nuclear",
     "coal": "coal",
-    "batteries": "storage",
+    "batteries": "battery",
     "imports": "imports_other",
     "other": "imports_other",
 }

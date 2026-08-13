@@ -11,7 +11,8 @@ user-facing doc — keep it updated whenever behavior or data status changes.
 ```
 src/connectors/{caiso,pjm,ercot,miso,spp,nyiso,isone}.py   one module per ISO
 src/eia.py            EIA-930 API client: gap-fill fallback, US48 overlay, reconciliation
-src/pipeline.py       orchestrator: incremental pull -> gap repair (ISO retry, then EIA) -> US48
+src/pipeline.py       orchestrator: incremental pull -> gap repair (ISO retry, then EIA)
+                      -> EIA fill for buckets a source can't report -> US48
 src/db.py             DuckDB storage. THE .duckdb FILE IS NOT COMMITTED - it is rebuilt
                       from docs/data/iso_daily_<year>.json on every fresh checkout
 src/export.py         DB -> docs/data/*.json (per-year files, snapshot, meta) + interpolation
@@ -75,22 +76,38 @@ changes daily — this keeps the repo small forever. Never commit
    is what motivated the split. Don't break this contract — it's the
    monitoring, and its value is entirely in not crying wolf.
 
-8. **Storage is discharge only, clipped at the source's native interval.**
-   Sources disagree: ERCOT/MISO/CAISO feeds and EIA's ERCO/MISO are net of
-   charging, PJM and EIA's SWPP/ISNE are discharge-only, SPP/NYISO/ISONE
-   and EIA's CISO/PJM/NYIS have no storage series at all. Blending those is
-   what made EIA's US48 storage +8.4 TWh in 2025 against CAISO's -1.9 TWh.
-   Never clip a daily total — that reports heavy cycling as zero. EIA's
-   storage bucket therefore comes from the hourly route while every other
-   fuel comes from the daily one (`_storage_daily` in src/eia.py). Full
-   reasoning in src/schema.py's docstring and the README.
+8. **The `battery` bucket is battery discharge only, clipped at the source's
+   native interval, and never contains pumped hydro.** Sources disagree:
+   ERCOT/MISO/CAISO feeds and EIA's ERCO/MISO are net of charging, PJM and
+   EIA's SWPP/ISNE are discharge-only, SPP/NYISO/ISONE and EIA's
+   CISO/PJM/NYIS have no series at all. Three rules, each from a real bug:
+   - Never clip a daily total — that reports heavy cycling as zero. EIA's
+     storage codes therefore come from the hourly route while other fuels
+     come from the daily one (`_storage_daily`).
+   - Never clip an already-summed series. `clip(sum of BAs)` deleted 21% of
+     national discharge vs `sum of clip(each BA)`; US48 uses
+     `_national_storage_daily`, which sums per respondent.
+   - EIA's `PS` maps to **hydro**, not battery — every ISO feed already
+     files pumped storage there, and it was 43% of EIA's storage codes.
+   Never clamp a bad row to 0; **drop** it. A zero is a measurement, so a
+   clamp writes "the batteries did nothing" and no repair pass ever returns
+   (that is what put the cliff in ERCOT's line). Full reasoning in
+   src/schema.py's docstring and the README.
+
+9. **EIA's national battery figure is a floor, not a total** — CISO, PJM and
+   NYIS report no battery series to EIA-930, so the largest fleet in the
+   country is absent from it. Do not "fix" the national line sitting below
+   CAISO's; say so instead (the dashboard does). Connectors whose own source
+   cannot carry a bucket declare `EIA_BACKED_CATEGORIES` and the pipeline
+   fills it from EIA on dates the ISO left empty (ERCOT, SPP, ISONE).
 
 ## Connector contract
 
 Each module defines `ISO`, `EARLIEST_DATE`, `REQUIRES_AUTH`,
 `fetch_range(start, end) -> DataFrame[date, iso, fuel_category,
 generation_mwh]`, optionally `REQUIRED_ENV` (skip-without-creds),
-`GAP_REPAIR_ENV`, `LOOKBACK_DAYS`. Raise on unrecoverable errors; return
+`GAP_REPAIR_ENV`, `LOOKBACK_DAYS`, `EIA_BACKED_CATEGORIES` (buckets this
+source structurally cannot report). Raise on unrecoverable errors; return
 empty (not raise) when data simply isn't published yet. Unrecognized native
 fuels bucket to `imports_other` — never silently drop.
 
@@ -115,7 +132,9 @@ no full fuel-mix product and needs a B2C bearer token besides the key.
   read the run logs via the GitHub MCP tools instead).
 - Dashboard: `cd docs && python -m http.server 8420`, drive with Playwright
   (chromium at /opt/pw-browsers/chromium), screenshot every tab.
-- Numbers: trigger reconcile.yml (ratios vs EIA should be ~0.95-1.05) and
+- Numbers: trigger reconcile.yml - it compares PER FUEL as well as on the
+  total, because a small bucket can be wrong by 2x without moving the total
+  (which is how the battery bucket went unnoticed). Ratios ~0.95-1.05, and
   sanity-check magnitudes (2025 actuals): MISO ~660, PJM ~875, ERCOT ~485,
   SPP ~300, CAISO ~225, NYISO ~133, ISONE ~108 TWh/yr. CAISO moved up from
   ~210 when storage became discharge-only — its battery discharge is 5.5%

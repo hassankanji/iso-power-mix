@@ -101,6 +101,15 @@ REQUIRES_AUTH = False
 # ~1 day, the XLSX needs a window this wide to overwrite those preliminary
 # dashboard rows with settlement data when ERCOT publishes it in arrears.
 LOOKBACK_DAYS = 45
+# Neither ERCOT source can carry the battery bucket across the whole
+# history: the settlement XLSX has no storage column at all (see the module
+# docstring), and the dashboard feed - which does report "Power Storage" -
+# only holds the current day or two. So every older day is filled from
+# EIA's ERCO respondent, which the pipeline does for the dates this
+# connector leaves without a battery row. Cross-checked 2026-08-13: ERCO
+# discharge averaged 24.9 GWh/day against 25.0 from the dashboard feed over
+# the same week, so the two splice without a step.
+EIA_BACKED_CATEGORIES = ("battery",)
 
 _GENERATION_PAGE_URL = "https://www.ercot.com/gridinfo/generation"
 _DASHBOARD_FUELMIX_URL = "https://www.ercot.com/api/1/services/read/dashboards/fuel-mix.json"
@@ -132,10 +141,10 @@ _DIRECT_FUEL_MAP = {
     "wnd": "wind",
     "solar": "solar",
     "biomass": "other_renewables",
-    "powerstorage": "storage",
-    "battery": "storage",
-    "energystorage": "storage",
-    "esr": "storage",
+    "powerstorage": "battery",
+    "battery": "battery",
+    "energystorage": "battery",
+    "esr": "battery",
     "other": "imports_other",
     "oth": "imports_other",
     "wsl": "imports_other",

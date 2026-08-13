@@ -23,10 +23,29 @@ offset (the 1-hour DST error this ignores misallocates <0.2% of a day's
 energy between two adjacent days, twice a year).
 
 EIA fuel codes are coarser than some ISO feeds: petroleum (OIL) and
-unknown (UNK) land in imports_other, pumped storage may be inside WAT
-(hydro) depending on vintage, and battery storage (BAT) only exists in
-recent years. Codes are mapped defensively; anything unrecognized goes to
+unknown (UNK) land in imports_other, and battery storage (BAT) only exists
+in recent years. Codes are mapped defensively; anything unrecognized goes to
 imports_other rather than being dropped.
+
+STORAGE CODES NEVER COME FROM THE DAILY ROUTE. BAT, PS, OES and UES are all
+net of charging, and a value already netted over a day cannot be turned back
+into discharge - so every one of them is dropped from the daily route and
+rebuilt from the hourly one, clipped at zero per hour before being summed
+into local days. That is true of PS as much as of BAT: PS lands in hydro,
+because every ISO feed reports pumped storage inside its hydro column, but
+taking it from the daily route would add a net-convention number to a
+gross-generation bucket.
+
+THE NATIONAL SERIES IS SUMMED, NOT CLIPPED. For iso='US48' the storage
+buckets come from _national_storage_daily, which adds up each balancing
+authority's own clipped discharge. Clipping EIA's pre-summed US48 row
+instead cancels one region's discharge against another's charging - 21% of
+national discharge deleted when measured on 2026-08-13. Every other bucket
+still comes from the US48 daily route, where a sum is just a sum.
+
+None of that closes the gap in EIA's national battery figure: CISO, PJM and
+NYIS report no battery series at all (NO_BATTERY_SERIES_AT_EIA), so the
+country's largest fleet is simply absent from it. See src/schema.py.
 """
 from __future__ import annotations
 
@@ -70,10 +89,10 @@ _FUELTYPE_TO_CANONICAL = {
     "WAT": "hydro",
     "SUN": "solar",
     "WND": "wind",
-    "BAT": "storage",   # Battery storage
-    "PS": "storage",    # Pumped storage
-    "OES": "storage",   # Other energy storage
-    "UES": "storage",   # Unknown energy storage
+    "BAT": "battery",   # Battery storage
+    "PS": "hydro",      # Pumped storage - hydro, same as every ISO feed files it
+    "OES": "battery",   # Other energy storage
+    "UES": "battery",   # Unknown energy storage
     "GEO": "other_renewables",
     "BIO": "other_renewables",
     "SNB": "solar",     # Solar with integrated battery storage
@@ -83,9 +102,32 @@ _FUELTYPE_TO_CANONICAL = {
     "UNK": "imports_other",
 }
 
-# The codes whose hourly values are net of charging and therefore have to be
-# clipped per hour rather than per day (see src/schema.py).
-_STORAGE_CODES = [code for code, canon in _FUELTYPE_TO_CANONICAL.items() if canon == "storage"]
+# Every code EIA-930 uses for a storage RESOURCE. All of them are net of
+# charging, so all of them have to be clipped per hour rather than per day
+# (see src/schema.py) - including PS, which lands in hydro but is still a
+# machine that consumes energy half the time.
+_STORAGE_CODES = ["BAT", "PS", "OES", "UES"]
+
+# Where each of those codes belongs once clipped. PS is pumped hydro: the ISO
+# feeds all report it inside their hydro column, and it is 43% of EIA's
+# storage-coded discharge, so leaving it in the battery bucket made EIA's
+# battery number incomparable with every ISO's (measured 2026-08-13,
+# scripts/diagnose_storage.py section 3).
+_STORAGE_CODE_BUCKET = {code: _FUELTYPE_TO_CANONICAL[code] for code in _STORAGE_CODES}
+
+# EIA-930 publishes balancing authorities AND rolled-up regions through the
+# same `respondent` facet, so an unfiltered query returns the country several
+# times over. These are the aggregates; everything else is a real BA.
+AGGREGATE_RESPONDENTS = {
+    "US48", "CAL", "CAR", "CENT", "FLA", "MIDA", "MIDW",
+    "NE", "NW", "NY", "SE", "SW", "TEN", "TEX",
+}
+
+# Respondents that report no battery series to EIA-930 at all. Their fleets
+# are missing from the national figure entirely - CISO's most of all, the
+# largest in the country - which is why the national battery line is a floor,
+# not a total. Verified 2026-08-13; revisit if EIA starts publishing them.
+NO_BATTERY_SERIES_AT_EIA = ("CISO", "PJM", "NYIS")
 
 
 def has_key() -> bool:
@@ -136,6 +178,14 @@ def _daily_route(session, respondent: str, timezone: str, start: dt.date, end: d
     df["date"] = pd.to_datetime(df["period"], errors="coerce").dt.date
     df["mwh"] = pd.to_numeric(df["value"], errors="coerce")
     df = df.dropna(subset=["date", "mwh"])
+    # Every storage code is dropped here and rebuilt from the hourly route by
+    # the caller. A daily value is already netted over the day, and net cannot
+    # be turned back into discharge. That applies to PS as much as to BAT:
+    # PS lands in hydro, but taking it from this route would quietly add a
+    # net-convention number to a gross-generation bucket.
+    df = df[~df["fueltype"].astype(str).str.strip().str.upper().isin(_STORAGE_CODES)]
+    if df.empty:
+        return pd.DataFrame(columns=_EMPTY)
     df["fuel_category"] = df["fueltype"].map(_bucket)
     # Values are already daily MWh; multiple EIA codes sharing a canonical
     # bucket are simply summed (energy sums - no averaging trap here).
@@ -143,50 +193,100 @@ def _daily_route(session, respondent: str, timezone: str, start: dt.date, end: d
     return out.rename(columns={"mwh": "generation_mwh"})
 
 
+_EMPTY = ["date", "fuel_category", "generation_mwh"]
+
+
+def _storage_rows(session, start: dt.date, end: dt.date, respondent: str | None) -> pd.DataFrame:
+    """Raw hourly storage-code readings, padded a day each side so the
+    UTC->local shift doesn't clip boundary hours. `respondent=None` asks for
+    every respondent at once (the national path)."""
+    params = {
+        "frequency": "hourly",
+        "data[0]": "value",
+        "facets[fueltype][]": _STORAGE_CODES,  # requests repeats the key per code
+        "start": f"{(start - dt.timedelta(days=1)).isoformat()}T00",
+        "end": f"{(end + dt.timedelta(days=1)).isoformat()}T23",
+    }
+    if respondent is not None:
+        params["facets[respondent][]"] = respondent
+    rows = _get_pages(session, "fuel-type-data", params)
+    if not rows:
+        return pd.DataFrame(columns=["respondent", "period", "code", "mwh"])
+    df = pd.DataFrame(rows)
+    df["code"] = df["fueltype"].astype(str).str.strip().str.upper()
+    # Belt and braces: honour the facet client-side too, so a route that ever
+    # ignores it cannot fold non-storage fuels into these numbers.
+    df = df[df["code"].isin(_STORAGE_CODES)]
+    if df.empty:
+        return pd.DataFrame(columns=["respondent", "period", "code", "mwh"])
+    df["mwh"] = pd.to_numeric(df["value"], errors="coerce")
+    df["respondent"] = df["respondent"].astype(str).str.strip().str.upper()
+    return df.dropna(subset=["mwh"])[["respondent", "period", "code", "mwh"]]
+
+
+def _clip_to_daily(df: pd.DataFrame, utc_offset: int, start: dt.date, end: dt.date) -> pd.DataFrame:
+    """Turn raw hourly storage readings into daily discharge per canonical
+    bucket, clipping each (respondent, bucket, hour) at zero first.
+
+    The grouping key is what makes this correct. Clipping per HOUR is what
+    separates discharge from net. Clipping per RESPONDENT is what stops one
+    BA's charging from cancelling another's discharge - the 21% national
+    undercount in src/schema.py. Clipping per BUCKET is what keeps a pumping
+    hour at Bath County from erasing a discharging hour of PJM batteries,
+    since the two are now different fuels."""
+    if df.empty:
+        return pd.DataFrame(columns=_EMPTY)
+    out = df.copy()
+    out["fuel_category"] = out["code"].map(_STORAGE_CODE_BUCKET)
+    ts = pd.to_datetime(out["period"], format="%Y-%m-%dT%H", errors="coerce")
+    out["date"] = (ts + pd.Timedelta(hours=utc_offset)).dt.date
+    out = out.dropna(subset=["date"])
+    out = out[(out["date"] >= start) & (out["date"] <= end)]
+    if out.empty:
+        return pd.DataFrame(columns=_EMPTY)
+    per_hour = out.groupby(
+        ["respondent", "fuel_category", "date", "period"], as_index=False
+    )["mwh"].sum()
+    per_hour["mwh"] = per_hour["mwh"].clip(lower=0)
+    daily = per_hour.groupby(["date", "fuel_category"], as_index=False)["mwh"].sum()
+    return daily.rename(columns={"mwh": "generation_mwh"})[_EMPTY]
+
+
 def _storage_daily(session, respondent: str, utc_offset: int, start: dt.date, end: dt.date) -> pd.DataFrame:
-    """Daily storage DISCHARGE for one respondent, built from hourly values.
+    """Daily battery discharge and pumped-hydro discharge for one respondent.
 
     The daily route hands back storage already netted over the day, and a net
-    daily total cannot be turned back into discharge - so storage is the one
-    bucket we always rebuild from the hourly route, clipping each hour at
-    zero before summing into local days. Faceting to the storage codes keeps
-    this to a few hundred rows a day, small next to the daily route it
-    supplements. Returns an empty frame when the respondent reports no
+    daily total cannot be turned back into discharge - so these are the two
+    buckets we always rebuild from the hourly route. Faceting to the storage
+    codes keeps it to a few hundred rows a day, small next to the daily route
+    it supplements. Returns an empty frame when the respondent reports no
     storage at all (CISO, PJM and NYIS do not)."""
-    rows = _get_pages(
-        session,
-        "fuel-type-data",
-        {
-            "frequency": "hourly",
-            "data[0]": "value",
-            "facets[respondent][]": respondent,
-            "facets[fueltype][]": _STORAGE_CODES,  # requests repeats the key per code
-            "start": f"{(start - dt.timedelta(days=1)).isoformat()}T00",
-            "end": f"{(end + dt.timedelta(days=1)).isoformat()}T23",
-        },
-    )
-    if not rows:
-        return pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"])
-    df = pd.DataFrame(rows)
-    # Belt and braces: honour the facet client-side too, so a route that ever
-    # ignores it cannot fold non-storage fuels into this number.
-    df = df[df["fueltype"].str.upper().isin(_STORAGE_CODES)]
+    return _clip_to_daily(_storage_rows(session, start, end, respondent), utc_offset, start, end)
+
+
+def _national_storage_daily(session, utc_offset: int, start: dt.date, end: dt.date) -> pd.DataFrame:
+    """Daily national battery and pumped-hydro discharge, summed from every
+    balancing authority's OWN clipped series rather than read off EIA's
+    pre-summed US48 one.
+
+    EIA's US48 row is the country already added together, so clipping it
+    charges the whole nation's charging against the whole nation's discharge
+    and books only the difference - 21% of real discharge deleted (measured
+    2026-08-13, scripts/diagnose_storage.py section 2). Summing per-BA
+    discharge is the same quantity every ISO row in the database already
+    holds, which is the only way the national line and the ISO lines can be
+    read against each other.
+
+    Local days use the US48 series' own Eastern offset for every BA, so a
+    western BA's late-evening discharge can land on the following national
+    day. That misallocates at most one hour of one fleet between two adjacent
+    days and never changes a total - the same trade the hourly fallback route
+    already makes for DST."""
+    df = _storage_rows(session, start, end, None)
     if df.empty:
-        return pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"])
-    ts = pd.to_datetime(df["period"], format="%Y-%m-%dT%H", errors="coerce")
-    df["date"] = (ts + pd.Timedelta(hours=utc_offset)).dt.date
-    df["mwh"] = pd.to_numeric(df["value"], errors="coerce")
-    df = df.dropna(subset=["date", "mwh"])
-    df = df[(df["date"] >= start) & (df["date"] <= end)]
-    if df.empty:
-        return pd.DataFrame(columns=["date", "fuel_category", "generation_mwh"])
-    # Sum the storage codes within each hour first, then clip: an hour where
-    # batteries discharge while pumped hydro pumps is one fleet, one net.
-    per_hour = df.groupby(["date", "period"], as_index=False)["mwh"].sum()
-    per_hour["mwh"] = per_hour["mwh"].clip(lower=0)
-    out = per_hour.groupby("date", as_index=False)["mwh"].sum()
-    out["fuel_category"] = "storage"
-    return out.rename(columns={"mwh": "generation_mwh"})[["date", "fuel_category", "generation_mwh"]]
+        return pd.DataFrame(columns=_EMPTY)
+    df = df[~df["respondent"].isin(AGGREGATE_RESPONDENTS)]
+    return _clip_to_daily(df, utc_offset, start, end)
 
 
 def _hourly_route(session, respondent: str, utc_offset: int, start: dt.date, end: dt.date) -> pd.DataFrame:
@@ -208,19 +308,42 @@ def _hourly_route(session, respondent: str, utc_offset: int, start: dt.date, end
     ts = pd.to_datetime(df["period"], format="%Y-%m-%dT%H", errors="coerce")
     df["date"] = (ts + pd.Timedelta(hours=utc_offset)).dt.date
     df["mwh"] = pd.to_numeric(df["value"], errors="coerce")
+    df["code"] = df["fueltype"].astype(str).str.strip().str.upper()
     df = df.dropna(subset=["date", "mwh"])
     df = df[(df["date"] >= start) & (df["date"] <= end)]
-    df["fuel_category"] = df["fueltype"].map(_bucket)
-    # Storage is discharge-only, so its hours are clipped before they are
-    # summed into a day - every other bucket is already non-negative.
-    is_storage = df["fuel_category"] == "storage"
-    if is_storage.any():
-        per_hour = df[is_storage].groupby(["date", "period"], as_index=False)["mwh"].sum()
-        per_hour["mwh"] = per_hour["mwh"].clip(lower=0)
-        per_hour["fuel_category"] = "storage"
-        df = pd.concat([df[~is_storage], per_hour], ignore_index=True)
-    out = df.groupby(["date", "fuel_category"], as_index=False)["mwh"].sum()
-    return out.rename(columns={"mwh": "generation_mwh"})
+    # Storage codes are discharge-only, so their hours are clipped before they
+    # are summed into a day - every other bucket is already non-negative. The
+    # clipped result is then merged back in, which is how PS reaches hydro
+    # without carrying its pumping hours along.
+    is_storage = df["code"].isin(_STORAGE_CODES)
+    plain = df[~is_storage].copy()
+    plain["fuel_category"] = plain["fueltype"].map(_bucket)
+    clipped = _clip_to_daily(
+        df.loc[is_storage, ["period", "code", "mwh"]].assign(respondent=respondent),
+        utc_offset,
+        start,
+        end,
+    )
+    out = pd.concat([plain[_EMPTY[:2] + ["mwh"]].rename(columns={"mwh": "generation_mwh"}), clipped], ignore_index=True)
+    return out.groupby(["date", "fuel_category"], as_index=False)["generation_mwh"].sum()
+
+
+def fetch_battery_daily(iso: str, start: dt.date, end: dt.date) -> pd.DataFrame:
+    """Daily battery discharge alone, for an ISO whose own feed cannot report
+    it (ERCOT's settlement workbook has no storage column; SPP's and ISO-NE's
+    feeds have no storage series at all).
+
+    Only the battery bucket comes back. The same query also yields pumped
+    hydro, and it is deliberately discarded here: these ISOs DO report hydro,
+    with pumped storage already inside it, so adding EIA's PS would double
+    count. This is the cheap route - one faceted hourly call - because the
+    caller wants one bucket, not a whole mix."""
+    respondent, _timezone, utc_offset = RESPONDENTS[iso]
+    start = max(start, EIA_EARLIEST)
+    if end < start:
+        return pd.DataFrame(columns=_EMPTY)
+    out = _storage_daily(http_session(), respondent, utc_offset, start, end)
+    return out[out["fuel_category"] == "battery"].reset_index(drop=True)
 
 
 def fetch_daily(iso: str, start: dt.date, end: dt.date) -> pd.DataFrame:
@@ -237,18 +360,25 @@ def fetch_daily(iso: str, start: dt.date, end: dt.date) -> pd.DataFrame:
     try:
         out = _daily_route(session, respondent, timezone, start, end)
         if not out.empty:
-            # The daily route's storage figure is net of charging; replace it
-            # with discharge rebuilt from the hourly route. If that call
-            # fails, drop storage rather than keep a number on the wrong
-            # definition - a missing bucket is honest, a mixed one is not.
-            out = out[out["fuel_category"] != "storage"]
+            # _daily_route has already dropped every storage code, because a
+            # daily value is netted over the day and net cannot be turned back
+            # into discharge. Rebuild them from the hourly route. If that call
+            # fails, leave both buckets short rather than keep a number on the
+            # wrong definition - a missing bucket is honest, a mixed one is
+            # not, and hydro missing its pumped share is visible while hydro
+            # carrying a net-convention PS figure is not.
             try:
-                storage = _storage_daily(session, respondent, utc_offset, start, end)
+                storage = (
+                    _national_storage_daily(session, utc_offset, start, end)
+                    if iso == "US48"
+                    else _storage_daily(session, respondent, utc_offset, start, end)
+                )
             except Exception as e:
-                print(f"EIA: storage rebuild failed for {respondent} ({e}); omitting storage")
+                print(f"EIA: storage rebuild failed for {respondent} ({e}); omitting battery and pumped hydro")
                 storage = None
             if storage is not None and not storage.empty:
                 out = pd.concat([out, storage], ignore_index=True)
+                out = out.groupby(["date", "fuel_category"], as_index=False)["generation_mwh"].sum()
             return out
         print(f"EIA: daily route empty for {respondent} {start}..{end}; trying hourly route")
     except Exception as e:
