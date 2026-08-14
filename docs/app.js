@@ -867,10 +867,14 @@ function renderStatusChips(isoStats, meta) {
   if (nInterp > 0) chip(`${nInterp} missing source days estimated by interpolation`, "info");
 }
 
+// Only elements carrying a data-view are tabs. The nav also holds a plain
+// link out to the reader guide, which shares the .tab-btn look but switches
+// no view - selecting on the class alone made it try to open `view-undefined`
+// and throw on the way out of the page.
 function setupTabs(onOpen = {}) {
-  document.querySelectorAll(".tab-btn").forEach(btn => {
+  document.querySelectorAll(".tab-btn[data-view]").forEach(btn => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tab-btn[data-view]").forEach(b => b.classList.remove("active"));
       document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById(`view-${btn.dataset.view}`).classList.add("active");
