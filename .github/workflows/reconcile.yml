@@ -42,7 +42,10 @@ jobs:
         if: ${{ !startsWith(github.event.inputs.mode, 'diagnose') }}
         env:
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
-        run: python scripts/reconcile_eia.py --days ${{ github.event.inputs.days }}
+          # Via the environment, not pasted into the command line - see the
+          # same note in daily.yml.
+          IN_DAYS: ${{ github.event.inputs.days }}
+        run: python scripts/reconcile_eia.py --days "${IN_DAYS:-30}"
 
       - name: Diagnose storage convention
         if: github.event.inputs.mode == 'diagnose-storage'

@@ -43,6 +43,20 @@ h1 { margin: 0 0 4px; font-size: 1.6rem; }
 
 .status-chips { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
 
+/* Staleness banner. Loud enough that a reader who did not build this site
+   cannot mistake frozen data for current data, and absent entirely on a
+   normal day. */
+.banner {
+  margin-top: 10px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  max-width: 900px;
+}
+
+.banner.warn { border: 1px solid #8a6d3b; color: #e6a23c; background: rgba(230, 162, 60, 0.1); }
+.banner.alarm { border: 1px solid #a33; color: #ff9a8f; background: rgba(231, 76, 60, 0.14); }
+
 .chip {
   font-size: 0.75rem;
   padding: 3px 10px;
@@ -191,9 +205,10 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
 
 .national-bars { max-width: 640px; }
 
-/* The head row only exists when several change columns are on - that is the
-   signal the panel needs the extra width. */
-.national-bars:has(.head-row) { max-width: 940px; }
+/* Set by renderBarRows when several change columns are on. (The head row is
+   no longer the signal for this: share mode prints one to carry its unit even
+   with a single column, which needs no extra width.) */
+.national-bars.multi-col { max-width: 940px; }
 
 /* 380px, not 340: the snapshot rows carry a day-over-day change column, and
    the fixed columns (label + value + share + change) plus gaps need room
@@ -219,6 +234,7 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
 }
 
 .bar-row.head-row .value { color: var(--muted); }
+.bar-row.head-row .unit { text-transform: none; }
 
 .snapshot-card {
   background: var(--panel);
@@ -275,6 +291,14 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
   .bar-row .value.pct { width: 38px; }
   .bar-row .value.delta { width: 58px; font-size: 0.66rem; }
   .snapshot-grid { grid-template-columns: 1fr; }
+}
+
+/* With all four change columns on, a phone cannot show both the bar and the
+   numbers. The numbers are the point, so the track yields rather than
+   squeezing every fuel label onto two lines. */
+@media (max-width: 700px) {
+  .snapshot-grid.wide .bar-track,
+  .national-bars.multi-col .bar-track { display: none; }
 }
 
 .bar-row.total-row {

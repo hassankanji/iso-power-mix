@@ -22,7 +22,7 @@
      "days_compared": 30,
      "ours_avg_gwh_per_day": 0.0,
      "eia_avg_gwh_per_day": 0.0,
-     "ratio": NaN,
+     "ratio": null,
      "verdict": "too small to judge"
     },
     "hydro": {
