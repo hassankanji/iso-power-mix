@@ -184,6 +184,8 @@ cd docs && python -m http.server 8420             # dashboard at localhost:8420
 
 The database file is rebuilt automatically from the committed JSON files — nothing to download or restore.
 
+There is no unit-test suite (the data is verified by reconciliation against EIA), but `python scripts/check_dashboard.py` is the dashboard's smoke test: it drives a real browser through every control combination on every tab — 110 of them — and fails on any console error, any chart that renders empty, and any width from 320px up where the page scrolls sideways. Run it after touching anything in `docs/`. `--url https://hassankanji.github.io/iso-power-mix` points it at the deployed site instead.
+
 ## If it ever stops updating
 
 The site is designed to keep running unattended, and to be honest when it isn't. In order of likelihood:
