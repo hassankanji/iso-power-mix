@@ -142,17 +142,17 @@ The 7 ISOs cover about **65%** of U.S. generation (~9,600 of ~14,500 GWh/day in 
 
 ## Data quality
 
-Independently audited against EIA-930's federal measurements (30 days ending 2026-08-11, GWh/day):
+Independently audited against EIA-930's federal measurements (30 days ending 2026-08-12, GWh/day):
 
 | ISO | ours | EIA | ratio |
 |---|---|---|---|
 | PJM | 2,801 | 2,801 | 1.000 |
-| SPP | 1,065 | 1,062 | 1.003 |
-| ERCOT | 1,712 | 1,717 | 0.997 |
-| MISO | 2,140 | 2,147 | 0.997 |
-| NYISO | 421 | 423 | 0.995 |
-| CAISO | 805 | 672 | 1.199\* |
-| ISO-NE | 334 | 358 | 0.935\* |
+| SPP | 1,071 | 1,067 | 1.004 |
+| ERCOT | 1,721 | 1,726 | 0.997 |
+| MISO | 2,139 | 2,146 | 0.997 |
+| NYISO | 421 | 423 | 0.994 |
+| CAISO | 807 | 674 | 1.198\* |
+| ISO-NE | 335 | 358 | 0.935\* |
 
 \* Structural, not errors: CAISO's public feed includes imports and gross-vs-net metering differences (trends and mix are unaffected — just don't compare its absolute level to EIA's); ISO-NE's API covers market-metered units, while EIA also estimates small non-market resources.
 
@@ -191,6 +191,7 @@ The site is designed to keep running unattended, and to be honest when it isn't.
 - **Site shows stale data mid-morning:** most likely GitHub delayed the scheduled run — check the repo's Actions tab; you can also press "Run workflow" on *Daily ISO generation-mix pull* to update immediately.
 - **A run is red:** open its log; the failing ISO and reason are printed plainly. One ISO failing never blocks the others, whatever succeeded is still published, and GitHub emails the repo owner on failures. Runs also go red if any ISO's data ages past 8 days — that's deliberate monitoring, not a crash.
 - **A source credential lapses** (PJM/MISO/ISO-NE keys): that ISO alone goes red and stops updating while the other six carry on. Re-register the key and update the Actions secret; no code change is needed.
+- **A GitHub Actions deprecation:** the runner currently warns that `actions/checkout@v4` and `actions/setup-python@v5` target Node 20, and runs them on Node 24 anyway. It is only a warning today; if GitHub eventually drops the shim, both runs fail at the setup step (an obvious, loud failure with nothing to do with the data). Bumping the two action versions in `.github/workflows/` is the whole fix.
 - **After ~60 days of zero repo activity**, GitHub pauses cron schedules; re-enable with one click under Actions. (Daily data commits normally count as activity, so this only matters if updates were already broken for two months — the case worth knowing about if nobody is watching the repo for a stretch.)
 - **Nobody is watching:** failure emails go to the repo owner only. If the site should be monitored while the owner is away, add a teammate as a repo collaborator — they'll get the same Actions notifications. Failing that, the staleness banner on the dashboard is the backstop: it tells any reader, without anyone having to check GitHub at all.
 
