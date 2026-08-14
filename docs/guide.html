@@ -16,7 +16,7 @@
 <body>
 <header>
   <h1>Reading the Generation Mix Tracker</h1>
-  <p class="subtitle">What the numbers are, where they come from, and what not to read into them.</p>
+  <p class="subtitle">What the numbers are, where they come from, and other considerations</p>
 </header>
 
 <nav class="tabs">
@@ -26,9 +26,8 @@
 <main class="guide">
 
   <p class="lede">
-    Daily electricity generation by fuel for all seven U.S. ISOs/RTOs, in one
-    place, updated every morning. It exists to answer supply questions —
-    above all <strong>how much gas is being burned, where, and against
+    Daily electricity generation by fuel type for all seven U.S. ISOs/RTOs, in one
+    place, updated every morning. It exists to show <strong>how much gas is being burned, where, and against
     what</strong> — without opening seven different market websites.
   </p>
 
@@ -48,8 +47,7 @@
       dashed line above the stack is EIA's measurement of the entire lower 48 —
       the gap between them is the third of the country that never joined an
       ISO (the utility-run Southeast, Northwest and Southwest). Tick
-      <em>% of total</em> to read mix share instead of volume; that is where
-      gas-for-coal displacement is easiest to see.</dd>
+      <em>% of total</em> to read mix share instead of volume</dd>
 
     <dt>Fuel Comparison</dt>
     <dd>One fuel at a time, one line per market, so you can see which market is
@@ -122,13 +120,10 @@
   <p class="view-note">
     Each market is compared against <em>its own</em> latest day shifted back,
     not a fixed calendar date, because the ISOs publish on different delays. A
-    blank change cell means there is nothing to compare against — it never
-    means zero.
+    blank change cell means there is nothing to compare against.
   </p>
 
-  <h2>What to trust, and what not to</h2>
-
-  <p>Each of these is a real property of the underlying data, not a bug:</p>
+  <h2>Some notes about the data</h2>
 
   <dl>
     <dt>Battery is discharge only</dt>
@@ -151,8 +146,7 @@
 
     <dt>The freshest ERCOT and MISO days are marked "preliminary"</dt>
     <dd>They come from live telemetry and are replaced automatically by
-      settlement-quality data — ERCOT's within one to four weeks. The label
-      disappears on its own.</dd>
+      settlement-quality data — ERCOT's within one to four weeks. </dd>
 
     <dt>Smaller print</dt>
     <dd>NYISO dual-fuel units count as gas, so severe winter oil-switching days
@@ -176,13 +170,14 @@
       <em>Data freshness &amp; coverage</em> table at the bottom of the Latest
       Snapshot tab — it shows each market's newest day and any unfilled gaps.</li>
     <li><strong>A sudden cliff or spike in one bucket</strong> is worth
-      reporting. Most of the caveats above were found exactly that way.</li>
+      reporting. Most of the caveats above were found just because something looked weird in the data.</li>
   </ul>
 
   <p class="view-note">
     Full methodology, data sources, per-ISO quirks and the reasoning behind
     every judgement call:
-    <a href="https://github.com/hassankanji/iso-power-mix#readme">the project README</a>.
+    <a href="https://github.com/hassankanji/iso-power-mix">the project README</a>.
+    For anyone who wants to make future edits to the code and improve on this, they can click the link above and make a copy of the code. Lastly, please don't hesitate at all to reach out with any suggestions to improve and iterate on this website. I really enjoyed working on it and would love any and all feedback to try make it as useful as possible. Contact me anytime at hassankanji2027@u.northwestern.edu
   </p>
 
 </main>
