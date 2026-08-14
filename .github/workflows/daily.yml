@@ -54,6 +54,10 @@ jobs:
       # only produce a "skipped" notice) - the job goes red so GitHub emails
       # a notification, but whatever data DID succeed is still committed by
       # the next step.
+      # Dispatch inputs reach the shell as environment variables, never as
+      # ${{ }} pasted into the script body - that form is expanded before bash
+      # ever sees it, so a value containing shell syntax would run as part of
+      # the command.
       - name: Run pipeline
         env:
           # Fallbacks tolerate the secret being saved under a near-miss name.
@@ -62,13 +66,17 @@ jobs:
           ISONE_USERNAME: ${{ secrets.ISONE_USERNAME }}
           ISONE_PASSWORD: ${{ secrets.ISONE_PASSWORD }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+          IN_ISO: ${{ github.event.inputs.iso }}
+          IN_START: ${{ github.event.inputs.start }}
+          IN_END: ${{ github.event.inputs.end }}
+          IN_US48_START: ${{ github.event.inputs.us48_start }}
         run: |
-          ARGS=""
-          if [ -n "${{ github.event.inputs.iso }}" ]; then ARGS="$ARGS --iso ${{ github.event.inputs.iso }}"; fi
-          if [ -n "${{ github.event.inputs.start }}" ]; then ARGS="$ARGS --start ${{ github.event.inputs.start }}"; fi
-          if [ -n "${{ github.event.inputs.end }}" ]; then ARGS="$ARGS --end ${{ github.event.inputs.end }}"; fi
-          if [ -n "${{ github.event.inputs.us48_start }}" ]; then ARGS="$ARGS --us48-start ${{ github.event.inputs.us48_start }}"; fi
-          python scripts/run_pipeline.py $ARGS
+          ARGS=()
+          if [ -n "$IN_ISO" ]; then ARGS+=(--iso "$IN_ISO"); fi
+          if [ -n "$IN_START" ]; then ARGS+=(--start "$IN_START"); fi
+          if [ -n "$IN_END" ]; then ARGS+=(--end "$IN_END"); fi
+          if [ -n "$IN_US48_START" ]; then ARGS+=(--us48-start "$IN_US48_START"); fi
+          python scripts/run_pipeline.py "${ARGS[@]}"
 
       - name: Commit updated data
         if: always()

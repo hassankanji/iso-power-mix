@@ -38,5 +38,9 @@ jobs:
             echo "No data changes to commit."
           else
             git commit -m "Backfill gap days from EIA-930"
-            git push
+            # This job runs for up to two hours, so a daily run has very
+            # likely committed in the meantime; rebase onto it and push back
+            # to whichever branch was dispatched (matching daily.yml).
+            git pull --rebase origin ${{ github.ref_name }} || true
+            git push origin HEAD:${{ github.ref_name }}
           fi

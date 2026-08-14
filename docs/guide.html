@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reading the U.S. ISO Generation Mix Tracker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<!-- Same cache-buster convention as index.html - bump on any edit here. -->
+<link rel="stylesheet" href="style.css?v=2026-08-14">
+<!-- This page exists so the dashboard can be shared with people who should
+     not have to open a code repository to understand what they are looking
+     at. It is deliberately a SUBSET of the README, which stays canonical:
+     what a reader needs, none of the maintenance detail. If the two ever
+     disagree, the README is right. -->
+</head>
+<body>
+<header>
+  <h1>Reading the Generation Mix Tracker</h1>
+  <p class="subtitle">What the numbers are, where they come from, and what not to read into them.</p>
+</header>
+
+<nav class="tabs">
+  <a class="tab-btn" href="index.html">&larr; Back to the dashboard</a>
+</nav>
+
+<main class="guide">
+
+  <p class="lede">
+    Daily electricity generation by fuel for all seven U.S. ISOs/RTOs, in one
+    place, updated every morning. It exists to answer supply questions —
+    above all <strong>how much gas is being burned, where, and against
+    what</strong> — without opening seven different market websites.
+  </p>
+
+  <h2>The short version</h2>
+  <ul>
+    <li><strong>Updated twice daily</strong>, by mid-morning ET, through <em>yesterday</em> for every market.</li>
+    <li><strong>Nothing to install or log into.</strong> The page is static; the link works for anyone.</li>
+    <li><strong>The numbers come from the markets themselves</strong> — CAISO, PJM, ERCOT, MISO, SPP, NYISO and ISO-NE each publish their own fuel mix — with the federal EIA-930 dataset used to fill gaps and to draw the national total.</li>
+    <li><strong>If the data goes stale, the site says so</strong> in a banner at the top. No banner means the newest day is current.</li>
+  </ul>
+
+  <h2>The five tabs</h2>
+
+  <dl>
+    <dt>National Trend</dt>
+    <dd>Everything the seven ISOs generated, stacked by fuel, day by day. The
+      dashed line above the stack is EIA's measurement of the entire lower 48 —
+      the gap between them is the third of the country that never joined an
+      ISO (the utility-run Southeast, Northwest and Southwest). Tick
+      <em>% of total</em> to read mix share instead of volume; that is where
+      gas-for-coal displacement is easiest to see.</dd>
+
+    <dt>Fuel Comparison</dt>
+    <dd>One fuel at a time, one line per market, so you can see which market is
+      driving a move. The dashed US lower-48 line is the true national number
+      for that fuel — total U.S. gas burn, say — and it is far larger than any
+      single ISO, so untick it in the legend when you want to compare markets
+      against each other. <em>% of each ISO's total</em> normalizes market size
+      away. Smoothing is a 7-day trailing average, on by default.</dd>
+
+    <dt>National by ISO</dt>
+    <dd>The same national total, split by market instead of by fuel. Answers
+      "who is big" and "whose load is moving".</dd>
+
+    <dt>Per-ISO Breakdown</dt>
+    <dd>One market's full fuel mix over time.</dd>
+
+    <dt>Latest Snapshot</dt>
+    <dd>The most recent day in detail — see below.</dd>
+  </dl>
+
+  <p class="view-note">
+    Every chart has a <strong>Stacked / Lines</strong> switch (stacked answers
+    "what was the total and who contributed"; lines answer "where is this one
+    series going" without the series underneath moving the baseline), a
+    checkbox legend for excluding series, range presets from 1D to Max, and
+    free date pickers.
+  </p>
+
+  <h2>The Latest Snapshot tab, and the toggle worth knowing about</h2>
+
+  <p>
+    The snapshot shows the newest day at three levels — the whole lower 48, the
+    seven tracked ISOs summed, then each market on its own — with each fuel's
+    output, its share of that day, and how it has changed.
+  </p>
+
+  <p>
+    Two controls sit above it. <strong>Change vs</strong> picks the comparison
+    period: yesterday, a week, a month, a year, or all four at once.
+    <strong>Change shown as</strong> switches what the change columns measure:
+  </p>
+
+  <div class="callout">
+    <p>
+      <strong>Energy (GWh)</strong> — how many gigawatt-hours moved.
+      Straightforward, but load moves every fuel at once: on a hot day every
+      column is green, on a mild day every column is red, and neither tells you
+      who gained ground.
+    </p>
+    <p>
+      <strong>Share of mix (pp)</strong> — how many <em>percentage points</em>
+      of the mix each fuel gained or lost. Gas at 42.1% today against 39.8% a
+      year ago reads <strong>+2.3 pp</strong>. This divides the load move out,
+      so displacement shows up as one fuel moving against another. Hover any
+      cell to see both underlying shares and the exact day compared.
+    </p>
+    <p class="muted-note">
+      Percentage points, not percent: +2.3 pp is the share moving from 39.8 to
+      42.1, not a 2.3% change in gas burn. The Total row keeps showing the load
+      itself, in percent, since a total's share of itself is always 100%.
+    </p>
+  </div>
+
+  <p>
+    With <strong>All four</strong> selected in share mode you get the whole
+    trajectory at a glance — day, week, month and year side by side, per fuel,
+    per market.
+  </p>
+
+  <p class="view-note">
+    Each market is compared against <em>its own</em> latest day shifted back,
+    not a fixed calendar date, because the ISOs publish on different delays. A
+    blank change cell means there is nothing to compare against — it never
+    means zero.
+  </p>
+
+  <h2>What to trust, and what not to</h2>
+
+  <p>Each of these is a real property of the underlying data, not a bug:</p>
+
+  <dl>
+    <dt>Battery is discharge only</dt>
+    <dd>Energy sent <em>out</em> of the battery fleet. Charging is excluded —
+      it is load, not generation — so the battery number never goes below zero
+      and is <em>not</em> the net battery position. Pumped hydro is not in this
+      bucket; it sits in Hydro, where every ISO files it. On the Fuel
+      Comparison tab the national battery line runs <em>below</em> CAISO's own
+      line, because CAISO, PJM and NYISO report no battery series to EIA at
+      all — that national figure is a floor, not a total.</dd>
+
+    <dt>CAISO's absolute level is not comparable to EIA's</dt>
+    <dd>CAISO's public feed includes imports (~13% of its total) that EIA's net
+      generation figure excludes. Trends and mix are unaffected; the level runs
+      about 20% above EIA's measurement of the same grid.</dd>
+
+    <dt>ISO-NE runs slightly low</dt>
+    <dd>Its API covers market-metered units; EIA also estimates small
+      non-market resources, so ISO-NE reads about 6% below EIA.</dd>
+
+    <dt>The freshest ERCOT and MISO days are marked "preliminary"</dt>
+    <dd>They come from live telemetry and are replaced automatically by
+      settlement-quality data — ERCOT's within one to four weeks. The label
+      disappears on its own.</dd>
+
+    <dt>Smaller print</dt>
+    <dd>NYISO dual-fuel units count as gas, so severe winter oil-switching days
+      overstate NYISO gas somewhat. SPP's day boundary is GMT, a few hours off
+      the others. Anything a source reports that doesn't map to one of the nine
+      buckets lands in "Imports / Other" rather than being dropped.</dd>
+  </dl>
+
+  <p class="view-note">
+    Everything here is checked against EIA-930's independent federal
+    measurements — per fuel, not just on the total — and the five markets
+    without a structural difference agree to within half a percent.
+  </p>
+
+  <h2>If something looks wrong</h2>
+  <ul>
+    <li><strong>A stale-data banner at the top</strong> tells you how old the
+      newest day is. Past 8 days it turns red: the daily update has probably
+      stopped and the repo owner needs to know.</li>
+    <li><strong>No banner but a number looks off:</strong> check the
+      <em>Data freshness &amp; coverage</em> table at the bottom of the Latest
+      Snapshot tab — it shows each market's newest day and any unfilled gaps.</li>
+    <li><strong>A sudden cliff or spike in one bucket</strong> is worth
+      reporting. Most of the caveats above were found exactly that way.</li>
+  </ul>
+
+  <p class="view-note">
+    Full methodology, data sources, per-ISO quirks and the reasoning behind
+    every judgement call:
+    <a href="https://github.com/hassankanji/iso-power-mix#readme">the project README</a>.
+  </p>
+
+</main>
+
+<footer>
+  <p>Data pulled directly from CAISO, PJM, ERCOT, MISO, SPP, NYISO and ISO-NE, with EIA-930 as gap-filler and national reference. Updated daily around 9am ET via GitHub Actions.</p>
+</footer>
+</body>
+</html>

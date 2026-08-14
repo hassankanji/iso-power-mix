@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import pathlib
 import sys
 
@@ -84,6 +85,14 @@ def verdict_for(iso: str, fuel: str | None, ratio: float, ours: float, theirs: f
     if 0.95 <= ratio <= 1.05:
         return "OK"
     return "check" if 0.85 <= ratio <= 1.15 else "INVESTIGATE"
+
+
+# A ratio against a zero denominator is NaN, and `json.dump` writes that as a
+# bare `NaN` token - which Python reads back happily and every strict JSON
+# parser rejects, `JSON.parse` included. The file is published on the Pages
+# site, so it has to be JSON that any reader can load: non-finite becomes null.
+def json_ratio(ratio: float) -> float | None:
+    return round(ratio, 4) if math.isfinite(ratio) else None
 
 
 def compare(ours: dict, theirs: dict) -> tuple[float, float, float, int] | None:
@@ -151,7 +160,7 @@ def main() -> None:
             "days_compared": n_days,
             "ours_avg_gwh_per_day": round(ours_avg, 1),
             "eia_avg_gwh_per_day": round(eia_avg, 1),
-            "ratio": round(ratio, 4),
+            "ratio": json_ratio(ratio),
             "verdict": verdict,
             "fuels": {},
         }
@@ -206,7 +215,7 @@ def main() -> None:
                 "days_compared": f_days,
                 "ours_avg_gwh_per_day": round(f_ours, 2),
                 "eia_avg_gwh_per_day": round(f_eia, 2),
-                "ratio": round(f_ratio, 4),
+                "ratio": json_ratio(f_ratio),
                 "verdict": f_verdict,
                 **({"note": f_note} if f_note else {}),
             }

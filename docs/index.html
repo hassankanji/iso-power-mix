@@ -10,13 +10,17 @@
      deployed data. Bump the date whenever app.js or style.css changes; the
      value is arbitrary, only changing it matters. The vendored Chart.js build
      is deliberately left alone - it never changes, so it should stay cached. -->
-<link rel="stylesheet" href="style.css?v=2026-08-13">
+<link rel="stylesheet" href="style.css?v=2026-08-14">
 <script src="vendor/chart.umd.min.js"></script>
 </head>
 <body>
 <header>
   <h1>U.S. ISO Generation Mix Tracker</h1>
   <p id="subtitle" class="subtitle">Loading...</p>
+  <!-- Shown only when the newest data is older than it should be. The daily
+       job going quiet is the one failure a reader cannot otherwise see: every
+       ISO freezes together, so nothing on the page looks out of place. -->
+  <div id="stale-banner" class="banner" hidden></div>
   <div id="status-chips" class="status-chips"></div>
 </header>
 
@@ -26,6 +30,9 @@
   <button class="tab-btn" data-view="byiso">National by ISO</button>
   <button class="tab-btn" data-view="iso">Per-ISO Breakdown</button>
   <button class="tab-btn" data-view="snapshot">Latest Snapshot</button>
+  <!-- Not a tab: the reader guide, so someone sent this link has the
+       explanation without needing the repository. -->
+  <a class="tab-btn guide-link" href="guide.html">How to read this &rarr;</a>
 </nav>
 
 <main>
@@ -128,11 +135,18 @@
           <option value="1W">A week earlier</option>
           <option value="1M">A month earlier</option>
           <option value="1Y">A year earlier</option>
-          <option value="all">All four</option>
+          <option value="all">All four (1D / 1W / 1M / 1Y)</option>
+        </select>
+      </label>
+      <label>Change shown as
+        <select id="snapshot-mode">
+          <option value="energy" selected>Energy (GWh)</option>
+          <option value="share">Share of mix (pp)</option>
         </select>
       </label>
     </div>
     <p class="view-note">Each area is compared against its own latest day shifted back, not against a fixed calendar date, because the ISOs publish on different delays. Hover a change to see the exact day it is measured against.</p>
+    <p class="view-note" id="snapshot-mode-note"></p>
 
     <h2 id="snapshot-us48-heading" hidden>U.S. lower-48 total (EIA)</h2>
     <p class="view-note" id="snapshot-us48-note" hidden></p>
@@ -158,6 +172,6 @@
   <p id="footer-quality"></p>
 </footer>
 
-<script src="app.js?v=2026-08-13"></script>
+<script src="app.js?v=2026-08-14"></script>
 </body>
 </html>

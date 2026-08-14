@@ -16,6 +16,11 @@ src/pipeline.py       orchestrator: incremental pull -> gap repair (ISO retry, t
 src/db.py             DuckDB storage. THE .duckdb FILE IS NOT COMMITTED - it is rebuilt
                       from docs/data/iso_daily_<year>.json on every fresh checkout
 src/export.py         DB -> docs/data/*.json (per-year files, snapshot, meta) + interpolation
+docs/guide.html       reader-facing "how to read this" page, linked from the
+                      dashboard header - the thing to share with people who
+                      shouldn't need the repo. A deliberate SUBSET of the
+                      README (still canonical); update the README first, then
+                      this if the change is reader-visible.
 docs/                 static dashboard (vanilla JS + vendored Chart.js, no build step)
                       It makes NO network calls at runtime beyond its own
                       data/*.json - there was an Hourly tab that called
@@ -130,8 +135,14 @@ no full fuel-mix product and needs a B2C bearer token besides the key.
 - `python scripts/run_pipeline.py --iso CAISO` (needs open network — the
   Claude sandbox blocks ISO hosts; use workflow_dispatch on a branch and
   read the run logs via the GitHub MCP tools instead).
-- Dashboard: `cd docs && python -m http.server 8420`, drive with Playwright
-  (chromium at /opt/pw-browsers/chromium), screenshot every tab.
+- Dashboard: `python scripts/check_dashboard.py` is the closest thing to a
+  test suite - it serves docs/ and drives chromium through every control
+  combination on every tab (110), failing on console/page errors, empty
+  charts, and any width from 320px up where `document.body.scrollWidth`
+  exceeds the viewport. That last check exists because a single flex row that
+  cannot fit widens the whole document, which is how the page came to scroll
+  sideways on every phone without anyone noticing. Run it after any docs/
+  change, and still screenshot the tabs - it cannot see ugly.
 - Numbers: trigger reconcile.yml - it compares PER FUEL as well as on the
   total, because a small bucket can be wrong by 2x without moving the total
   (which is how the battery bucket went unnoticed). Ratios ~0.95-1.05, and

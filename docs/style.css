@@ -43,6 +43,20 @@ h1 { margin: 0 0 4px; font-size: 1.6rem; }
 
 .status-chips { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
 
+/* Staleness banner. Loud enough that a reader who did not build this site
+   cannot mistake frozen data for current data, and absent entirely on a
+   normal day. */
+.banner {
+  margin-top: 10px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  max-width: 900px;
+}
+
+.banner.warn { border: 1px solid #8a6d3b; color: #e6a23c; background: rgba(230, 162, 60, 0.1); }
+.banner.alarm { border: 1px solid #a33; color: #ff9a8f; background: rgba(231, 76, 60, 0.14); }
+
 .chip {
   font-size: 0.75rem;
   padding: 3px 10px;
@@ -54,12 +68,22 @@ h1 { margin: 0 0 4px; font-size: 1.6rem; }
 .chip.warn { border-color: #8a6d3b; color: #e6a23c; background: rgba(230, 162, 60, 0.08); }
 .chip.info { border-color: #3b6d8a; color: #6fb3e0; background: rgba(77, 157, 224, 0.08); }
 
+/* The tab row is wider than a phone even before the guide link (542px of
+   labels against a 390px viewport), and a flex row that cannot fit widens
+   the whole document - which is why the entire page used to scroll sideways
+   on a phone, charts and all. It scrolls within itself instead. */
 .tabs {
   display: flex;
   gap: 4px;
   padding: 0 32px;
   border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+
+.tabs::-webkit-scrollbar { display: none; }
+
+.tab-btn { white-space: nowrap; }
 
 .tab-btn {
   background: transparent;
@@ -75,6 +99,10 @@ h1 { margin: 0 0 4px; font-size: 1.6rem; }
   color: var(--text);
   border-bottom: 2px solid var(--accent);
 }
+
+/* Pushed to the far end: it leaves the dashboard rather than switching a
+   view, and shouldn't read as one more tab in the sequence. */
+.tabs .guide-link { margin-left: auto; color: var(--accent); }
 
 main { padding: 24px 32px 48px; }
 
@@ -115,8 +143,12 @@ input[type="date"], select {
   cursor: pointer;
 }
 
+/* Eight preset pills are ~370px in a row - wider than a small phone, and an
+   unwrappable row sets the page's minimum width. It wraps instead; on any
+   screen with room it still sits on one line. */
 .range-presets {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   align-self: flex-end;
   margin-right: 8px;
@@ -191,23 +223,28 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
 
 .national-bars { max-width: 640px; }
 
-/* The head row only exists when several change columns are on - that is the
-   signal the panel needs the extra width. */
-.national-bars:has(.head-row) { max-width: 940px; }
+/* Set by renderBarRows when several change columns are on. (The head row is
+   no longer the signal for this: share mode prints one to carry its unit even
+   with a single column, which needs no extra width.) */
+.national-bars.multi-col { max-width: 940px; }
 
 /* 380px, not 340: the snapshot rows carry a day-over-day change column, and
    the fixed columns (label + value + share + change) plus gaps need room
    before the bar track can claim its minimum width. */
+/* min(..., 100%) on the track minimum, not a bare width: a minmax floor wider
+   than its container is a floor the grid honours anyway, pushing the page out
+   sideways. This way the last breakpoint is always "one column, container
+   width", with no media query needed to say so. */
 .snapshot-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr));
   gap: 16px;
 }
 
 /* Set when more than one change column is on: each costs 76px of fixed
    width, which the 380px card does not have to give. */
 .snapshot-grid.wide {
-  grid-template-columns: repeat(auto-fill, minmax(620px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(620px, 100%), 1fr));
 }
 
 .bar-row.head-row {
@@ -219,6 +256,7 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
 }
 
 .bar-row.head-row .value { color: var(--muted); }
+.bar-row.head-row .unit { text-transform: none; }
 
 .snapshot-card {
   background: var(--panel);
@@ -274,7 +312,28 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
   .bar-row .value { width: 58px; }
   .bar-row .value.pct { width: 38px; }
   .bar-row .value.delta { width: 58px; font-size: 0.66rem; }
-  .snapshot-grid { grid-template-columns: 1fr; }
+  /* The grid needs no override here - its minmax floors are capped at 100%. */
+
+  /* The page gutter is 64px of a 360px screen. Give it back. */
+  header { padding: 20px 16px 8px; }
+  .tabs { padding: 0 16px; }
+  main { padding: 20px 16px 40px; }
+  footer { padding: 16px 16px 32px; }
+}
+
+/* With all four change columns on, a phone cannot show both the bar and the
+   numbers. The numbers are the point, so the track yields rather than
+   squeezing every fuel label onto two lines - and past that, the card itself
+   scrolls. Four periods of change is a wide table by nature; the fix is to
+   let it scroll inside its own panel, never to let it drag the page sideways
+   (which it did, taking every chart with it). */
+@media (max-width: 700px) {
+  .snapshot-grid.wide .bar-track,
+  .national-bars.multi-col .bar-track { display: none; }
+
+  .snapshot-card { overflow-x: auto; }
+  .snapshot-grid.wide .bar-row,
+  .national-bars.multi-col .bar-row { min-width: max-content; }
 }
 
 .bar-row.total-row {
@@ -286,6 +345,34 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
 .bar-row.total-row .label { color: var(--text); }
 .bar-row.total-row .bar-track { background: transparent; }
 
+/* guide.html - the reader-facing explainer. Prose, so it gets a measure that
+   is comfortable to read rather than the dashboard's full width. */
+.guide { max-width: 820px; font-size: 0.92rem; line-height: 1.55; }
+.guide .lede { font-size: 1rem; color: var(--text); }
+.guide h2 { margin-top: 34px; }
+.guide dt { color: var(--text); font-weight: 600; margin-top: 14px; }
+.guide dd { margin: 4px 0 0; color: var(--muted); }
+.guide ul { color: var(--muted); padding-left: 20px; }
+.guide li { margin: 6px 0; }
+.guide p { color: var(--muted); }
+.guide a { color: var(--accent); }
+.guide strong { color: var(--text); }
+
+.guide .callout {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  background: var(--panel);
+  border-radius: 6px;
+  padding: 4px 16px;
+  margin: 14px 0;
+}
+
+.guide .muted-note { font-size: 0.85rem; opacity: 0.85; }
+
+/* The guide's nav holds a link, not tab buttons - keep it looking the same. */
+.tabs a.tab-btn { text-decoration: none; display: inline-block; }
+.tabs a.tab-btn:hover { color: var(--text); }
+
 .health-table {
   width: 100%;
   border-collapse: collapse;
@@ -294,6 +381,11 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--text); }
   border-radius: 8px;
   overflow: hidden;
 }
+
+/* Five columns of dates don't compress below about 400px, so the table gets
+   its own scroll rather than widening the page behind it. */
+.health-table { display: block; overflow-x: auto; }
+.health-table thead, .health-table tbody { display: table; width: 100%; }
 
 .health-table th, .health-table td {
   text-align: left;

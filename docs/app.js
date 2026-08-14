@@ -537,10 +537,10 @@ function fmtEnergy(mwh) {
   return `${gwh.toLocaleString(undefined, { maximumFractionDigits: 1 })} GWh`;
 }
 
-// Change cell. `prev` undefined means there is nothing to compare against -
-// either the comparison day is missing for this area entirely, or it reported
-// but carried no row for this fuel. Both render empty rather than as a
-// fabricated swing against zero.
+// An empty change cell: there is nothing to compare against - either the
+// comparison day is missing for this area entirely, or it reported but carried
+// no row for this fuel. Both render empty rather than as a fabricated swing
+// against zero.
 //
 // The second case is the one worth stating: an absent row and a zero row mean
 // different things and the data keeps them apart. PJM stores an explicit 0 for
@@ -548,10 +548,17 @@ function fmtEnergy(mwh) {
 // at all before EIA fills it, because ERCOT's settlement workbook has no such
 // column. Reading the absence as zero turned the second case into a +23 GWh
 // day-over-day swing that never happened.
+function blankDelta() {
+  return `<span class="value delta"></span>`;
+}
+
+function missing(v) {
+  return v === undefined || v === null || !Number.isFinite(v);
+}
+
+// Change in energy: "+120 GWh of wind against a week ago".
 function deltaCell(now, prev, prevLabel) {
-  if (prev === undefined || prev === null || !Number.isFinite(prev)) {
-    return `<span class="value delta"></span>`;
-  }
+  if (missing(prev)) return blankDelta();
   const d = now - prev;
   const pct = prev !== 0 ? ` (${d >= 0 ? "+" : ""}${((d / Math.abs(prev)) * 100).toFixed(1)}%)` : "";
   // Anything under 50 MWh rounds to zero at this display precision, and
@@ -562,6 +569,39 @@ function deltaCell(now, prev, prevLabel) {
   const cls = d > 0 ? "up" : "down";
   const sign = d > 0 ? "+" : "-";
   return `<span class="value delta ${cls}" title="vs ${prevLabel}${pct}">${sign}${fmtEnergy(Math.abs(d))}</span>`;
+}
+
+// Change in SHARE of the mix, in percentage points. The unit matters and the
+// cell says it: gas at 42.1% today against 39.8% a year ago is +2.3 pp, not
+// +5.8%, and writing it as a bare "%" is how those two get confused.
+//
+// This is the question raw energy cannot answer. On a hot day every fuel rises
+// together and every energy column is green, which says nothing about who
+// actually gained ground; on a mild day every column is red for the same
+// non-reason. Shares divide the load move out, so gas-for-coal displacement,
+// a solar build-out or a nuclear outage show up as movement in one direction
+// while something else moves the other way.
+function shareDeltaCell(nowPct, prevPct, prevLabel) {
+  if (missing(prevPct)) return blankDelta();
+  const d = nowPct - prevPct;
+  const title = `${nowPct.toFixed(1)}% of the mix now vs ${prevPct.toFixed(1)}% on ${prevLabel}`;
+  // Under 0.05pp rounds to "0.0 pp" anyway; "-0.0 pp" reads as a rendering bug.
+  if (Math.abs(d) < 0.05) return `<span class="value delta" title="${title}">0.0 pp</span>`;
+  const cls = d > 0 ? "up" : "down";
+  return `<span class="value delta ${cls}" title="${title}">${d > 0 ? "+" : "-"}${Math.abs(d).toFixed(1)} pp</span>`;
+}
+
+// The total row in share mode. A total's share of itself is always 100%, so
+// the pp change is trivially zero and the cell would be dead. The useful
+// number there is how the total itself moved in percent - the load signal the
+// per-fuel shares are deliberately blind to.
+function totalPctCell(now, prev, prevLabel) {
+  if (missing(prev) || prev === 0) return blankDelta();
+  const pct = ((now - prev) / Math.abs(prev)) * 100;
+  const title = `${fmtEnergy(now)} vs ${fmtEnergy(prev)} on ${prevLabel}`;
+  if (Math.abs(pct) < 0.05) return `<span class="value delta" title="${title}">0.0%</span>`;
+  const cls = pct > 0 ? "up" : "down";
+  return `<span class="value delta ${cls}" title="${title}">${pct > 0 ? "+" : "-"}${Math.abs(pct).toFixed(1)}%</span>`;
 }
 
 // The periods a snapshot can be compared against. Day-over-day answers "what
@@ -596,22 +636,51 @@ function comparisonsFor(iso, asOf, periods, mixes) {
 // where `mix` is a {fuel_category -> MWh} map for that comparison day or
 // undefined if the area has no data for it. They are derived client-side from
 // the same per-year rows the charts use, so they can never disagree.
-function renderBarRows(container, mix, comparisons = []) {
+//
+// `mode` picks what those change columns measure: "energy" (GWh moved) or
+// "share" (percentage points of the mix gained or lost). Both are computed
+// from the same two days - it is a presentation switch, not a different
+// question of the data.
+function renderBarRows(container, mix, comparisons = [], mode = "energy") {
   container.innerHTML = "";
+  // Several change columns need width the default panel doesn't have; one
+  // doesn't, even in share mode where a header row appears anyway.
+  container.classList.toggle("multi-col", comparisons.length > 1);
   const total = mix.reduce((s, m) => s + m.generation_mwh, 0);
-  const deltas = (value, pick) =>
-    comparisons.map(c => deltaCell(value, c.mix ? pick(c.mix) : undefined, c.date)).join("");
+  const sumOf = (m) => Object.values(m).reduce((s, v) => s + v, 0);
+  // Each comparison day needs its OWN total before any share of it can be
+  // taken - dividing last year's gas by today's total would fold the load
+  // change back into the very number that exists to exclude it.
+  const compTotals = comparisons.map(c => (c.mix ? sumOf(c.mix) : undefined));
 
-  // One column is self-explanatory from its tooltip; several are not.
-  if (comparisons.length > 1) {
+  const deltas = (value, pick) =>
+    comparisons.map((c, i) => {
+      const prev = c.mix ? pick(c.mix) : undefined;
+      if (mode !== "share") return deltaCell(value, prev, c.date);
+      const prevTotal = compTotals[i];
+      if (missing(prev) || !prevTotal) return blankDelta();
+      return shareDeltaCell(
+        total > 0 ? (value / total) * 100 : 0,
+        (prev / prevTotal) * 100,
+        c.date,
+      );
+    }).join("");
+
+  // One column is self-explanatory from its tooltip; several are not. In share
+  // mode the header also has to carry the unit, since "+2.3" beside a share
+  // column is exactly the number a reader will otherwise take for a percent.
+  if (comparisons.length > 1 || mode === "share") {
     const head = document.createElement("div");
     head.className = "bar-row head-row";
+    // The unit keeps its own casing - the header is uppercased, and "PP" is
+    // not what percentage points are called.
+    const unit = mode === "share" ? ` <span class="unit">pp</span>` : "";
     head.innerHTML = `
       <span class="label"></span>
       <span class="bar-track"></span>
       <span class="value">Output</span>
       <span class="value pct">Share</span>
-      ${comparisons.map(c => `<span class="value delta" title="vs ${c.date}">${c.label}</span>`).join("")}
+      ${comparisons.map(c => `<span class="value delta" title="vs ${c.date}">${c.label}${unit}</span>`).join("")}
     `;
     container.appendChild(head);
   }
@@ -632,12 +701,15 @@ function renderBarRows(container, mix, comparisons = []) {
   }
   const totalRow = document.createElement("div");
   totalRow.className = "bar-row total-row";
+  const totalDeltas = mode === "share"
+    ? comparisons.map((c, i) => totalPctCell(total, compTotals[i], c.date)).join("")
+    : deltas(total, sumOf);
   totalRow.innerHTML = `
     <span class="label">Total</span>
     <span class="bar-track"></span>
     <span class="value">${fmtEnergy(total)}</span>
     <span class="value pct">100%</span>
-    ${deltas(total, prev => Object.values(prev).reduce((s, v) => s + v, 0))}
+    ${totalDeltas}
   `;
   container.appendChild(totalRow);
 }
@@ -665,7 +737,7 @@ function mixesFor(rows, wanted) {
 // It runs on its own clock: EIA publishes later than the ISOs do, so its
 // latest day is often a day behind theirs. The heading states which day it
 // is instead of implying it lines up with the ISO snapshot.
-function renderSnapshotUs48(usRows, periods) {
+function renderSnapshotUs48(usRows, periods, mode) {
   const heading = document.getElementById("snapshot-us48-heading");
   const note = document.getElementById("snapshot-us48-note");
   const bars = document.getElementById("snapshot-us48-bars");
@@ -687,14 +759,14 @@ function renderSnapshotUs48(usRows, periods) {
   note.textContent =
     `EIA-930's measurement of the entire U.S. lower 48 for ${latest}.` +
     " EIA publishes on its own schedule, so this day can differ from the per-ISO days below.";
-  renderBarRows(bars, mix, comparisonsFor("US48", latest, periods, mixes));
+  renderBarRows(bars, mix, comparisonsFor("US48", latest, periods, mixes), mode);
 }
 
-function renderSnapshotNationalBars(mix, comparisons) {
-  renderBarRows(document.getElementById("snapshot-national-bars"), mix, comparisons);
+function renderSnapshotNationalBars(mix, comparisons, mode) {
+  renderBarRows(document.getElementById("snapshot-national-bars"), mix, comparisons, mode);
 }
 
-function renderSnapshotGrid(byIso, periods, prevMixes) {
+function renderSnapshotGrid(byIso, periods, prevMixes, mode) {
   const grid = document.getElementById("snapshot-grid");
   grid.innerHTML = "";
   // Four change columns no longer fit beside a readable bar at the default
@@ -710,7 +782,7 @@ function renderSnapshotGrid(byIso, periods, prevMixes) {
     const barsContainer = document.createElement("div");
     card.appendChild(barsContainer);
     grid.appendChild(card);
-    renderBarRows(barsContainer, mix, comparisonsFor(iso, as_of, periods, prevMixes));
+    renderBarRows(barsContainer, mix, comparisonsFor(iso, as_of, periods, prevMixes), mode);
   }
 }
 
@@ -736,6 +808,44 @@ function renderHealthTable(isoStats, gaps) {
   }
 }
 
+// How old the newest data may be before the site says so, in days. A normal
+// day is 1-2: the pipeline publishes through yesterday, and some ISOs lag.
+// STALE_WARN is a bad morning; STALE_ALARM matches the 8-day threshold that
+// turns the GitHub Actions run red in scripts/run_pipeline.py.
+const STALE_WARN_DAYS = 3;
+const STALE_ALARM_DAYS = 8;
+
+function todayUTC() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function daysBetween(fromISO, toISO) {
+  return Math.round((new Date(`${toISO}T00:00:00Z`) - new Date(`${fromISO}T00:00:00Z`)) / 86400000);
+}
+
+// Absolute staleness, which is the one thing the per-ISO chips below cannot
+// see: they compare each ISO against the freshest ISO, so a site whose daily
+// job has stopped entirely - every ISO equally frozen - reads as perfectly
+// healthy right up until someone notices the dates by eye. That is exactly the
+// failure a reader who did not build this will not catch, and exactly the one
+// that happens while nobody is watching the Actions tab (a lapsed API key, a
+// cron GitHub disabled after 60 idle days, a source that changed its URL).
+// The banner is the site saying it out loud, in the reader's own clock.
+function renderStaleBanner(isoStats) {
+  const banner = document.getElementById("stale-banner");
+  if (!banner || isoStats.length === 0) return;
+  const maxLatest = isoStats.reduce((m, s) => (s.latest > m ? s.latest : m), "0000-00-00");
+  const age = daysBetween(maxLatest, todayUTC());
+  if (age <= STALE_WARN_DAYS) return;
+  banner.hidden = false;
+  banner.className = age > STALE_ALARM_DAYS ? "banner alarm" : "banner warn";
+  banner.textContent =
+    `The newest data on this site is ${maxLatest}, ${age} days old.` +
+    (age > STALE_ALARM_DAYS
+      ? " The daily update has probably stopped - check the repository's Actions tab (see the README's \"If it ever stops updating\")."
+      : " The daily update may have been delayed; charts below are current as of that date.");
+}
+
 function renderStatusChips(isoStats, meta) {
   const container = document.getElementById("status-chips");
   container.innerHTML = "";
@@ -749,7 +859,7 @@ function renderStatusChips(isoStats, meta) {
   for (const iso of missingIsos) chip(`${iso} not included yet (awaiting API key)`, "warn");
   const maxLatest = isoStats.reduce((m, s) => (s.latest > m ? s.latest : m), "0000-00-00");
   for (const s of isoStats) {
-    const behind = Math.round((new Date(maxLatest) - new Date(s.latest)) / 86400000);
+    const behind = daysBetween(s.latest, maxLatest);
     if (behind > 3) chip(`${s.iso} data ${behind} days behind`, "warn");
   }
   const interp = meta.interpolated_days || {};
@@ -757,10 +867,14 @@ function renderStatusChips(isoStats, meta) {
   if (nInterp > 0) chip(`${nInterp} missing source days estimated by interpolation`, "info");
 }
 
+// Only elements carrying a data-view are tabs. The nav also holds a plain
+// link out to the reader guide, which shares the .tab-btn look but switches
+// no view - selecting on the class alone made it try to open `view-undefined`
+// and throw on the way out of the page.
 function setupTabs(onOpen = {}) {
-  document.querySelectorAll(".tab-btn").forEach(btn => {
+  document.querySelectorAll(".tab-btn[data-view]").forEach(btn => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tab-btn[data-view]").forEach(b => b.classList.remove("active"));
       document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById(`view-${btn.dataset.view}`).classList.add("active");
@@ -787,6 +901,7 @@ async function main() {
   document.getElementById("subtitle").textContent =
     `Data ${range.min} to ${range.max} - last updated ${new Date(meta.generated_at).toLocaleString()}`;
   renderStatusChips(meta.iso_stats, meta);
+  renderStaleBanner(meta.iso_stats);
 
   const isosPresent = uniqueSorted(rows.map(r => r.iso));
   document.getElementById("national-note").textContent =
@@ -890,13 +1005,21 @@ async function main() {
   };
 
   const periodSelect = document.getElementById("snapshot-period");
+  const modeSelect = document.getElementById("snapshot-mode");
+  const modeNote = document.getElementById("snapshot-mode-note");
   const refreshSnapshot = () => {
     const periods = selectedPeriods(periodSelect.value);
-    renderSnapshotUs48(usRows, periods);
-    renderSnapshotNationalBars(snapshot.national, periods.map(nationalComparison));
-    renderSnapshotGrid(snapshot.by_iso, periods, prevMixes);
+    const mode = modeSelect.value;
+    modeNote.textContent = mode === "share"
+      ? "Change columns show movement in mix share, in percentage points: gas at 42.1% today against"
+        + " 39.8% a year ago reads +2.3 pp. Hover a cell for both shares. Load lifts every fuel at once,"
+        + " so shares are what say who gained ground - the Total row keeps showing the load itself, in percent."
+      : "Change columns show movement in energy. Hover a cell for the percentage change.";
+    renderSnapshotUs48(usRows, periods, mode);
+    renderSnapshotNationalBars(snapshot.national, periods.map(nationalComparison), mode);
+    renderSnapshotGrid(snapshot.by_iso, periods, prevMixes, mode);
   };
-  periodSelect.addEventListener("change", refreshSnapshot);
+  for (const el of [periodSelect, modeSelect]) el.addEventListener("change", refreshSnapshot);
   refreshSnapshot();
 
   renderHealthTable(meta.iso_stats, gaps);
