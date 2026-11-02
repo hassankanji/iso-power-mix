@@ -1,12 +1,7 @@
 name: Daily ISO generation-mix pull
 
 on:
-  schedule:
-    # GitHub reliably delays cron starts by ~30-90 min, so these are set
-    # earlier than the desired wall time. Morning pull targets ~9am ET;
-    # the afternoon pass picks up late-published data and the current day.
-    - cron: "0 12 * * *"
-    - cron: "30 16 * * *"
+  # Scheduled runs disabled. Re-add a `schedule:` block here to resume.
   workflow_dispatch:
     inputs:
       iso:
